@@ -27,6 +27,7 @@ LEVEL_NAMES = {"main": "总表", "sub": "分表"}
 _env = Environment(
     loader=FileSystemLoader(TEMPLATES),
     autoescape=select_autoescape(["html"]),
+    auto_reload=True,   # 模板文件改动立即生效,不依赖进程重启
 )
 _env.globals.update(
     nav=NAV,

@@ -8,9 +8,18 @@ from tests.conftest import _add, _ids, _setup, _table_rows
 
 
 def _create_tenant_with_meters(client, name, meters_with_bases, date="2025-06-01"):
+    """绑定表的新协议:单相表字段 base_<id>;三相表 base_<id>_1/2/3。
+
+    meters_with_bases: (meter_id, value) 或 (meter_id, (v1, v2, v3))。
+    """
     data = {"name": name, "note": "", "start_date": date}
-    data["meter_ids"] = [str(mid) for mid, _ in meters_with_bases]
-    data["base_values"] = [str(v) for _, v in meters_with_bases]
+    for mid, val in meters_with_bases:
+        data["meter_ids"] = data.get("meter_ids", []) + [str(mid)]
+        if isinstance(val, tuple):
+            for i, v in enumerate(val, 1):
+                data[f"base_{mid}_{i}"] = str(v)
+        else:
+            data[f"base_{mid}"] = str(val)
     return client.post("/households/add", data=data)
 
 
@@ -81,9 +90,10 @@ def test_three_phase_meter_sums_readings(client):
     conn.execute("update meters set phase='three' where id=?", (meters["分电A"],))
     conn.commit()
     conn.close()
-    # 基数:三相之和 300(用 /meters/base)
+    # 基数:三相分相录入,合计 300(用 /meters/base)
     client.post("/meters/base", data={"meter_id": str(meters["分电A"]),
-                                      "reading_date": "2025-01-01", "value": "300",
+                                      "reading_date": "2025-01-01",
+                                      "b_1": "100", "b_2": "100", "b_3": "100",
                                       "tenant_price": "1"})
     # 抄表:三相 120/130/110 → 合计 360,用量 60 × 1 = 60 元
     client.post("/readings/add", data={
@@ -141,4 +151,45 @@ def test_bind_form_lists_meters_with_holders(client):
     assert "交接起始读数" in html
     assert "当前持有人" in html
     assert 'name="meter_ids"' in html
-    assert 'name="base_values"' in html
+    assert 'name="base_' in html
+
+
+def test_three_phase_tenant_handover_stores_components(client):
+    """新增租户绑定三相表:分相录入,存三相之和并留档 r1/r2/r3。"""
+    _setup(client, houses="房东\n租户A", meters="总电,电,总,,\n分电A,电,分,总电,租户A")
+    meters, _ = _ids(client)
+    conn = sqlite3.connect(db.DB_PATH)
+    conn.execute("update meters set phase='three' where id=?", (meters["分电A"],))
+    conn.commit()
+    conn.close()
+    r = _create_tenant_with_meters(client, "租户B", [(meters["分电A"], (100, 110, 120))])
+    assert r.status_code == 200
+    conn = sqlite3.connect(db.DB_PATH)
+    value, r1, r2, r3, note = conn.execute(
+        "select value, r1, r2, r3, note from readings where meter_id=? "
+        "order by id desc limit 1", (meters["分电A"],)).fetchone()
+    t = conn.execute("select start_value from takeovers where meter_id=? "
+                     "order by id desc limit 1", (meters["分电A"],)).fetchone()[0]
+    conn.close()
+    assert (value, r1, r2, r3) == (330, 100, 110, 120)
+    assert t == 330
+
+
+def test_three_phase_base_via_meters_base(client):
+    """表设置起始读数:三相表用 b_1/b_2/b_3,基数行保留分相。"""
+    _setup(client, houses="房东\n租户A", meters="总电,电,总,,\n分电A,电,分,总电,租户A")
+    meters, _ = _ids(client)
+    conn = sqlite3.connect(db.DB_PATH)
+    conn.execute("update meters set phase='three' where id=?", (meters["分电A"],))
+    conn.commit()
+    conn.close()
+    client.post("/meters/base", data={"meter_id": str(meters["分电A"]),
+                                      "reading_date": "2025-01-01",
+                                      "b_1": "50", "b_2": "60", "b_3": "70",
+                                      "tenant_price": "2"})
+    conn = sqlite3.connect(db.DB_PATH)
+    value, r1, r2, r3 = conn.execute(
+        "select value, r1, r2, r3 from readings where meter_id=? and is_initial=1",
+        (meters["分电A"],)).fetchone()
+    conn.close()
+    assert (value, r1, r2, r3) == (180, 50, 60, 70)

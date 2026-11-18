@@ -292,41 +292,67 @@ def households_page(request: Request, edit: int = Query(0), msg: str = "", ok: s
 
 
 @app.post("/households/add")
-def household_add(name: str = Form(...), note: str = Form(""),
-                  meter_ids: list[str] = Form([]),
-                  start_date: str = Form(...),
-                  base_values: list[str] = Form([])):
-    """新增租户并绑定表:每块绑定的表录入交接起始读数,作为该租户计费的起点。"""
+async def household_add(request: Request):
+    """新增租户并绑定表:每块绑定的表录入交接起始读数,作为该租户计费的起点。
+
+    单相表字段 base_<id>;三相表字段 base_<id>_1/2/3,存三相之和并留档分相。
+    """
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    note = str(form.get("note", "")).strip()
+    start_date = str(form.get("start_date", ""))
+    meter_ids = form.getlist("meter_ids")
+    if not name or not start_date:
+        return RedirectResponse("/households?msg=" + quote("名称与入住日期必填"), status_code=303)
     with connect() as conn:
-        cur = conn.execute("INSERT INTO households(name,note) VALUES (?,?)",
-                           (name.strip(), note.strip()))
+        cur = conn.execute("INSERT INTO households(name,note) VALUES (?,?)", (name, note))
         hh_id = cur.lastrowid
-        if len(meter_ids) != len(base_values):
-            return RedirectResponse(
-                "/households?msg=" + quote("表与起始读数数量不一致,请重试"), status_code=303)
-        for mid_s, val_s in zip(meter_ids, base_values):
+        bound = 0
+        for mid_s in meter_ids:
             try:
-                mid, start_val = int(mid_s), int(val_s)
+                mid = int(mid_s)
             except (TypeError, ValueError):
-                return RedirectResponse(
-                    "/households?msg=" + quote("起始读数必须是数字"), status_code=303)
+                continue
             meter = conn.execute("SELECT * FROM meters WHERE id=?", (mid,)).fetchone()
             if not meter:
                 continue
+            r1 = r2 = r3 = None
+            if meter["phase"] == "three":
+                try:
+                    r1 = int(form.get(f"base_{mid}_1", ""))
+                    r2 = int(form.get(f"base_{mid}_2", ""))
+                    r3 = int(form.get(f"base_{mid}_3", ""))
+                except (TypeError, ValueError):
+                    conn.execute("DELETE FROM households WHERE id=?", (hh_id,))
+                    return RedirectResponse(
+                        "/households?msg=" + quote(
+                            f"三相表「{meter['name']}」需要分别填写三个交接读数"), status_code=303)
+                start_val = r1 + r2 + r3
+            else:
+                raw = form.get(f"base_{mid}", "")
+                try:
+                    start_val = int(str(raw))
+                except (TypeError, ValueError):
+                    conn.execute("DELETE FROM households WHERE id=?", (hh_id,))
+                    return RedirectResponse(
+                        "/households?msg=" + quote(
+                            f"表「{meter['name']}」需要填写交接起始读数"), status_code=303)
             last = conn.execute(
                 "SELECT tenant_price FROM readings WHERE meter_id=? "
                 "ORDER BY reading_date DESC, id DESC LIMIT 1", (mid,)).fetchone()
             tp = last["tenant_price"] if last else 0.0
             rc = conn.execute(
-                "INSERT INTO readings(meter_id,reading_date,value,tenant_price,note) "
-                "VALUES (?,?,?,?,?)",
-                (mid, start_date, start_val, tp, f"租户「{name.strip()}」入住交接读数"))
+                "INSERT INTO readings(meter_id,reading_date,value,tenant_price,r1,r2,r3,note) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (mid, start_date, start_val, tp, r1, r2, r3,
+                 f"租户「{name}」入住交接读数"))
             conn.execute("UPDATE meters SET household_id=? WHERE id=?", (hh_id, mid))
             conn.execute(
                 "INSERT INTO takeovers(meter_id,household_id,start_date,start_value,reading_id,note) "
                 "VALUES (?,?,?,?,?,?)",
-                (mid, hh_id, start_date, start_val, rc.lastrowid, f"入住:{name.strip()}"))
-    return RedirectResponse("/households?ok=" + quote(f"租户已新增,已绑定 {len(meter_ids)} 块表"), status_code=303)
+                (mid, hh_id, start_date, start_val, rc.lastrowid, f"入住:{name}"))
+            bound += 1
+    return RedirectResponse("/households?ok=" + quote(f"租户已新增,已绑定 {bound} 块表"), status_code=303)
 
 
 @app.post("/households/edit")
@@ -370,7 +396,8 @@ def meters_page(request: Request, edit: int = Query(0), msg: str = "", ok: str =
 
 
 @app.post("/meters/base")
-def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: int = Form(...),
+def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: str = Form("0"),
+               b_1: str = Form(""), b_2: str = Form(""), b_3: str = Form(""),
                tenant_price: str = Form("")):
     with connect() as conn:
         # 已有抄表记录的表不允许重设基数,否则用量会被算错
@@ -381,6 +408,24 @@ def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: 
             return RedirectResponse(
                 "/meters?msg=" + quote("该表已有抄表记录,不能用起始读数重置。请改用「换表」。"),
                 status_code=303)
+        meter = conn.execute("SELECT * FROM meters WHERE id=?", (meter_id,)).fetchone()
+        r1 = r2 = r3 = None
+        if meter and meter["phase"] == "three":
+            try:
+                r1, r2, r3 = int(b_1), int(b_2), int(b_3)
+            except (TypeError, ValueError):
+                return RedirectResponse(
+                    "/meters?msg=" + quote("三相电表需要分别填写三个起始读数"), status_code=303)
+            if min(r1, r2, r3) < 0:
+                return RedirectResponse(
+                    "/meters?msg=" + quote("三相起始读数不能为负"), status_code=303)
+            value_i = r1 + r2 + r3
+        else:
+            try:
+                value_i = int(value)
+            except (TypeError, ValueError):
+                return RedirectResponse(
+                    "/meters?msg=" + quote("起始读数必须是数字"), status_code=303)
         last = conn.execute(
             "SELECT tenant_price FROM readings WHERE meter_id=? "
             "ORDER BY reading_date DESC, id DESC LIMIT 1", (meter_id,)
@@ -388,8 +433,8 @@ def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: 
         tp = float(tenant_price) if tenant_price != "" else (last["tenant_price"] if last else 0.0)
         conn.execute("DELETE FROM readings WHERE meter_id=? AND is_initial=1", (meter_id,))
         rc = conn.execute(
-            "INSERT INTO readings(meter_id,reading_date,value,tenant_price,is_initial) "
-            "VALUES (?,?,?,?,1)", (meter_id, reading_date, value, tp),
+            "INSERT INTO readings(meter_id,reading_date,value,tenant_price,r1,r2,r3,is_initial) "
+            "VALUES (?,?,?,?,?,?,?,1)", (meter_id, reading_date, value_i, tp, r1, r2, r3),
         )
         # 同步租期起点:该表当前绑定的租户以新基数开始
         m = conn.execute("SELECT household_id FROM meters WHERE id=?", (meter_id,)).fetchone()
@@ -398,7 +443,7 @@ def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: 
             conn.execute(
                 "INSERT INTO takeovers(meter_id,household_id,start_date,start_value,reading_id,note) "
                 "VALUES (?,?,?,?,?,?)",
-                (meter_id, m["household_id"], reading_date, value, rc.lastrowid, "基数设置"))
+                (meter_id, m["household_id"], reading_date, value_i, rc.lastrowid, "基数设置"))
     return RedirectResponse("/meters?ok=" + quote("起始读数已保存"), status_code=303)
 
 

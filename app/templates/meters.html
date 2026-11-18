@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="actionbar">
+  <a class="btn" href="/switches">⇄ 换表登记</a>
+  <span class="hint" style="margin:0">表损坏或到期更换时,用换表衔接新旧表读数</span>
+</div>
+
+<section class="card">
+  <h2>表清单</h2>
+  <p class="hint">总表对上向供水/供电部门结算,不向住户计费;分表挂在住户名下,是计费的依据。</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>表名</th><th>类型</th><th>级别</th><th>所属总表</th><th>归属住户</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>
+        {% if not rows %}<tr><td colspan="7" class="empty">还没有表,用下方表单添加。</td></tr>{% endif %}
+        {% for x in rows %}
+        {% if editing and editing.id == x.id %}
+        <tr class="editrow"><td colspan="7">
+          <form method="post" action="/meters/edit">
+            <input type="hidden" name="id" value="{{ x.id }}">
+            <div class="formgrid">
+              <div class="field"><label for="m-name-{{ x.id }}">表名</label>
+                <input id="m-name-{{ x.id }}" name="name" value="{{ x.name }}" required></div>
+              <div class="field"><label for="m-main-{{ x.id }}">所属总表</label>
+                <select id="m-main-{{ x.id }}" name="main_meter_id">
+                  <option value="">不归属总表</option>
+                  {% for m in rows if m.level == 'main' %}
+                  <option value="{{ m.id }}"{% if x.main_meter_id == m.id %} selected{% endif %}>{{ m.name }}</option>
+                  {% endfor %}
+                </select>
+                <span class="assist">仅分表需要归属总表</span></div>
+              <div class="field"><label for="m-hh-{{ x.id }}">归属住户</label>
+                <select id="m-hh-{{ x.id }}" name="household_id">
+                  <option value="">不归属住户</option>
+                  {% for hh in households %}<option value="{{ hh.id }}"{% if x.household_id == hh.id %} selected{% endif %}>{{ hh.name }}</option>{% endfor %}
+                </select></div>
+              <div class="field"><label for="m-active-{{ x.id }}">状态</label>
+                <select id="m-active-{{ x.id }}" name="active">
+                  <option value="1"{% if x.active %} selected{% endif %}>使用中</option>
+                  <option value="0"{% if not x.active %} selected{% endif %}>已停用</option>
+                </select></div>
+            </div>
+            <div class="actions"><button type="submit">保存修改</button><a class="btn ghost" href="/meters">取消</a></div>
+          </form>
+        </td></tr>
+        {% else %}
+        <tr>
+          <td>{{ x.name }}</td>
+          <td>{{ type_name(x.meter_type) }}</td>
+          <td>{% if x.level == 'main' %}<span class="tag muted">总表·不对住户计费</span>{% else %}<span class="tag accent">分表·计费用</span>{% endif %}</td>
+          <td>{{ m_names.get(x.main_meter_id, '—') }}</td>
+          <td>{{ hh_names.get(x.household_id, '—') }}</td>
+          <td>{% if x.active %}<span class="tag ok">使用中</span>{% else %}<span class="tag muted">已停用</span>{% endif %}</td>
+          <td><div class="rowactions">
+            <a class="btn ghost small" href="/meters?edit={{ x.id }}">修改</a>
+            <form method="post" action="/meters/delete" onsubmit="return confirm('删除表 {{ x.name }}?其抄表记录会一并删除。')">
+              <input type="hidden" name="id" value="{{ x.id }}">
+              <button class="danger small" type="submit">删除</button>
+            </form>
+          </div></td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>新增表</h2>
+  <form method="post" action="/meters/add">
+    <div class="formgrid">
+      <div class="field"><label for="m-new-name">表名</label><input id="m-new-name" name="name" required placeholder="例如:101水表"></div>
+      <div class="field"><label for="m-new-type">类型</label>
+        <select id="m-new-type" name="meter_type"><option value="water">水</option><option value="electricity">电</option></select></div>
+      <div class="field"><label for="m-new-level">级别</label>
+        <select id="m-new-level" name="level"><option value="sub">分表(计费)</option><option value="main">总表(对账)</option></select></div>
+      <div class="field"><label for="m-new-main">所属总表</label>
+        <select id="m-new-main" name="main_meter_id"><option value="">不归属总表</option>
+          {% for m in rows if m.level == 'main' %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label for="m-new-hh">归属住户</label>
+        <select id="m-new-hh" name="household_id"><option value="">不归属住户</option>
+          {% for hh in households %}<option value="{{ hh.id }}">{{ hh.name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label for="m-new-note">备注</label><input id="m-new-note" name="note" placeholder="选填"></div>
+    </div>
+    <div class="actions"><button type="submit">保存</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>设置起始读数(基数)</h2>
+  <p class="hint">系统从这个读数开始计算用量。同一块表重设会覆盖旧基数;已有抄表记录的表请用「换表」。</p>
+  <form method="post" action="/meters/base">
+    <div class="formgrid">
+      <div class="field"><label for="base-meter">表</label>
+        <select id="base-meter" name="meter_id" required>
+          {% for x in rows %}<option value="{{ x.id }}">{{ x.name }} · {{ type_name(x.meter_type) }}{{ level_name(x.level) }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label for="base-date">起始日期</label><input id="base-date" type="date" name="reading_date" value="{{ today }}" required></div>
+      <div class="field"><label for="base-value">起始读数</label><input id="base-value" type="number" name="value" required placeholder="表上当前读数"></div>
+      <div class="field"><label for="base-price">租客单价</label>
+        <input id="base-price" type="number" step="0.0001" name="tenant_price" placeholder="留空=沿用上次">
+        <span class="assist">房东向住户收取的单价</span></div>
+    </div>
+    <div class="actions"><button type="submit">保存起始读数</button></div>
+  </form>
+</section>
+{% endblock %}

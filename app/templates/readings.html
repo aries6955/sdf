@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="card">
+  <h2>新增抄表</h2>
+  <p class="hint">租客单价留空会自动沿用该表上次抄表的单价。读数不能小于上次,日期必须晚于上次。</p>
+  <form method="post" action="/readings/add">
+    <div class="formgrid">
+      <div class="field"><label for="r-meter">表</label>
+        <select id="r-meter" name="meter_id" required>
+          {% for m in meters %}<option value="{{ m.id }}">{{ m.name }} · {{ type_name(m.meter_type) }}{{ level_name(m.level) }}{% if m.household_id in hh_names %} · {{ hh_names[m.household_id] }}{% endif %}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label for="r-date">抄表日期</label><input id="r-date" type="date" name="reading_date" value="{{ today }}" required></div>
+      <div class="field"><label for="r-value">本次读数</label><input id="r-value" type="number" name="value" required placeholder="表上显示的数字"></div>
+      <div class="field"><label for="r-price">租客单价</label>
+        <input id="r-price" type="number" step="0.0001" name="tenant_price" placeholder="留空=沿用上次">
+        <span class="assist">房东向住户收取的单价</span></div>
+      <div class="field"><label for="r-note">备注</label><input id="r-note" name="note" placeholder="选填"></div>
+    </div>
+    <div class="actions"><button type="submit">保存抄表</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>抄表记录 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
+  <p class="hint">「本段用量」= 本次读数 − 上次读数。出账后该条记录锁定,需要更正请用「冲正」。</p>
+
+  <div class="card-section">
+    <p class="card-section-title">合计(基于筛选后的全部记录,不只看当前页)</p>
+    <div class="stats compact">
+      <div class="stat"><div class="k">命中记录</div><div class="v">{{ agg.n }}<span class="u"> 条</span></div></div>
+      <div class="stat"><div class="k">读数合计</div><div class="v">{{ '{:,}'.format(agg.v) }}</div></div>
+      <div class="stat"><div class="k">金额合计</div><div class="v">{{ money(total_amount) }}<span class="u"> 元</span></div></div>
+      <div class="stat"><div class="k">当前页</div><div class="v">{{ page }}<span class="u"> / {{ pages }} 页</span></div></div>
+    </div>
+  </div>
+
+  <div class="card-section">
+    <p class="card-section-title">筛选</p>
+    <form method="get" action="/readings">
+      <div class="formgrid">
+        <div class="field"><label for="f-hh">住户</label>
+          <select id="f-hh" name="household_id"><option value="">全部住户</option>
+            {% for id, n in hh_items %}<option value="{{ id }}"{% if household_id == id|string %} selected{% endif %}>{{ n }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label for="f-meter">表</label>
+          <select id="f-meter" name="meter_id"><option value="">全部表</option>
+            {% for m in meters %}<option value="{{ m.id }}"{% if meter_id == m.id|string %} selected{% endif %}>{{ m.name }}</option>{% endfor %}
+          </select></div>
+        <div class="field"><label for="f-from">日期起</label><input id="f-from" type="date" name="date_from" value="{{ date_from }}"></div>
+        <div class="field"><label for="f-to">日期止</label><input id="f-to" type="date" name="date_to" value="{{ date_to }}"></div>
+        <div class="field"><label for="f-status">状态</label>
+          <select id="f-status" name="billed">
+            <option value=""{% if billed == '' %} selected{% endif %}>全部记录</option>
+            <option value="1"{% if billed == '1' %} selected{% endif %}>已出账</option>
+            <option value="0"{% if billed == '0' %} selected{% endif %}>待出账</option>
+            <option value="init"{% if billed == 'init' %} selected{% endif %}>仅起始读数</option>
+          </select></div>
+      </div>
+      <div class="actions"><button type="submit">筛选</button><a class="btn ghost" href="/readings">清除条件</a></div>
+    </form>
+  </div>
+
+  <div class="card-section">
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>住户</th><th>表</th><th>类型</th><th>抄表日期</th><th>本次读数</th><th>本段用量</th><th>租客单价</th><th>金额(元)</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>
+          {% if not rows %}<tr><td colspan="10" class="empty">没有符合条件的抄表记录。</td></tr>{% endif %}
+          {% for x in rows %}
+          {% if edit == x.id and not x.billed %}
+          <tr class="editrow"><td colspan="10">
+            <form method="post" action="/readings/edit">
+              <input type="hidden" name="id" value="{{ x.id }}">
+              <div class="formgrid">
+                <div class="field"><label>表</label><input value="{{ x.meter_name }}" disabled></div>
+                <div class="field"><label for="ed-date-{{ x.id }}">抄表日期</label>
+                  <input id="ed-date-{{ x.id }}" type="date" name="reading_date" value="{{ x.reading_date }}" required></div>
+                <div class="field"><label for="ed-value-{{ x.id }}">本次读数</label>
+                  <input id="ed-value-{{ x.id }}" type="number" name="value" value="{{ x.value }}" required></div>
+                <div class="field"><label for="ed-price-{{ x.id }}">租客单价</label>
+                  <input id="ed-price-{{ x.id }}" type="number" step="0.0001" name="tenant_price" value="{{ x.tenant_price }}"></div>
+              </div>
+              <div class="actions"><button type="submit">保存修改</button><a class="btn ghost" href="/readings">取消</a></div>
+            </form>
+          </td></tr>
+          {% else %}
+          <tr>
+            <td>{{ x.household_name }}</td>
+            <td>{{ x.meter_name }}</td>
+            <td><span class="tag muted">{{ type_name(x.meter_type) }}</span> <span class="tag muted">{{ level_name(x.level) }}</span></td>
+            <td>{{ x.reading_date }}</td>
+            <td class="num">{{ '{:,}'.format(x.value) }}</td>
+            <td class="num">{{ x.usage }}</td>
+            <td class="num">{{ x.tenant_price }}</td>
+            <td class="num">{{ x.amount }}</td>
+            <td>{{ x.state }}</td>
+            <td><div class="rowactions">
+              {% if not x.billed and not x.is_initial %}<a class="btn ghost small" href="/readings?edit={{ x.id }}">修改</a>{% endif %}
+              {% if not x.is_initial and not x.billed %}
+              <form method="post" action="/readings/bill"><input type="hidden" name="id" value="{{ x.id }}"><button class="small" type="submit">出账</button></form>
+              {% endif %}
+              {% if not x.billed %}
+              <form method="post" action="/readings/delete" onsubmit="return confirm('删除这条抄表记录?')">
+                <input type="hidden" name="id" value="{{ x.id }}"><button class="danger small" type="submit">删除</button></form>
+              {% endif %}
+            </div></td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ pager | safe }}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="note">
+  <b>这里只做整体重置。</b>
+  住户与表请在左侧「系统 → 住户」「系统 → 表设置」中维护,各表起始读数在「表设置」页录入。
+</div>
+{% if bad %}
+<div class="flash err" role="status">发现 {{ bad|length }} 处文本可能是乱码(写入时编码出错):{{ bad[:8]|join('、') }}。建议清除后用示例数据重新录入。</div>
+{% endif %}
+
+<section class="card">
+  <h2>数据概览</h2>
+  <p class="hint">当前数据库:住户 {{ counts.住户 }} 条,表 {{ counts.表具 }} 条,抄表 {{ counts.抄表 }} 条,缴费 {{ counts.缴费 }} 条。</p>
+  <div class="actions">
+    <form method="post" action="/init/sample" onsubmit="return confirm('将先清空现有数据,再写入一套示例数据。确认继续?')">
+      <button class="warn" type="submit">填充示例数据</button>
+    </form>
+  </div>
+  <p class="hint" style="margin-top:10px">示例数据包含 3 位住户、2 块总表、4 块分表、两期抄表、四笔缴费和一条冲正,可用于验证计费逻辑是否正确。</p>
+</section>
+
+<section class="card">
+  <h2>房产名称</h2>
+  <p class="hint">显示在首页标题上。</p>
+  <form method="post" action="/init/property">
+    <div class="formgrid">
+      <div class="field"><label for="prop-name">名称</label>
+        <input id="prop-name" name="property_name" value="{{ name }}" placeholder="例如:城南小区 3 栋"></div>
+    </div>
+    <div class="actions"><button type="submit">保存房产名称</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>修改登录密码</h2>
+  <p class="hint">修改后立即生效,无需重启服务。旧密码将失效。</p>
+  <form method="post" action="/init/password">
+    <div class="formgrid">
+      <div class="field"><label for="pw-old">当前密码</label>
+        <input id="pw-old" type="password" name="old_password" required autocomplete="current-password"></div>
+      <div class="field"><label for="pw-new">新密码</label>
+        <input id="pw-new" type="password" name="new_password" required minlength="4" autocomplete="new-password"></div>
+      <div class="field"><label for="pw-confirm">确认新密码</label>
+        <input id="pw-confirm" type="password" name="confirm_password" required minlength="4" autocomplete="new-password"></div>
+    </div>
+    <div class="actions"><button type="submit">保存新密码</button></div>
+    <p class="hint" style="margin-top:10px">密码保存在项目目录的 password.txt。请妥善保管。如果忘记密码,可用超级密码登录后在此重新设置。</p>
+  </form>
+</section>
+
+<section class="card">
+  <h2>清空所有数据</h2>
+  <p class="hint">会删除住户、表、抄表、缴费、换表、冲正与设置,无法撤销。</p>
+  <div class="actions">
+    <form method="post" action="/init/clear" onsubmit="return confirm('确定要清空所有数据吗?\n\n将删除:住户、表、抄表、缴费、换表、冲正、设置。\n此操作无法撤销。');">
+      <button class="danger" type="submit">清空所有数据</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

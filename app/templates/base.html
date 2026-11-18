@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ title }} - 水电费管理</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💧</text></svg>">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<aside class="sidebar" id="sidebar">
+  <div class="brand">
+    <a class="name" href="/">水电费管理</a>
+    <div class="sub">总表与分表抄表计费</div>
+    <button class="collapse-btn" id="collapseBtn" type="button" title="折叠/展开侧栏" aria-label="折叠或展开侧栏">«</button>
+  </div>
+  {% for group_label, items in nav if group_label != "系统" %}
+  <nav class="sidegroup" aria-label="{{ group_label }}">
+    <div class="sidegroup-label">{{ group_label }}</div>
+    {% for key, href, text, icon in items %}
+    <a class="navlink{{ ' active' if key == active else '' }}" href="{{ href }}" title="{{ text }}"{% if key == active %} aria-current="page"{% endif %}>
+      <span class="ico" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span>
+    </a>
+    {% endfor %}
+  </nav>
+  {% endfor %}
+  <div class="spacer"></div>
+  {% set sys_items = nav_map.get('系统', []) %}
+  {% set sys_ns = namespace(active=false) %}
+  {% for key, href, text, icon in sys_items %}
+    {% if key == active %}{% set sys_ns.active = true %}{% endif %}
+  {% endfor %}
+  {% set sys_active = sys_ns.active %}
+  <nav class="sidegroup sysnav{{ ' open' if sys_active else '' }}" aria-label="系统">
+    <button class="sysnav-toggle" id="sysNavToggle" type="button"
+            aria-expanded="{{ 'true' if sys_active else 'false' }}" aria-controls="sysNavLinks">
+      <span class="ico" aria-hidden="true">⚙</span><span>系统</span>
+      <span class="chev" aria-hidden="true">›</span>
+    </button>
+    <div class="sysnav-links" id="sysNavLinks">
+      {% for key, href, text, icon in sys_items %}
+      <a class="navlink{{ ' active' if key == active else '' }}" href="{{ href }}" title="{{ text }}"{% if key == active %} aria-current="page"{% endif %}>
+        <span class="ico" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </nav>
+  <a class="quit" href="/logout"><span class="ico" aria-hidden="true">⏻</span><span>退出登录</span></a>
+</aside>
+<script>
+(function(){
+  var KEY='sdf_sidebar_collapsed';
+  var btn=document.getElementById('collapseBtn');
+  if(!btn) return;
+  if(localStorage.getItem(KEY)==='1'){document.body.classList.add('collapsed');btn.textContent='>>';}
+  btn.addEventListener('click',function(){
+    var c=document.body.classList.toggle('collapsed');
+    btn.textContent=c?'>>':'<<';
+    localStorage.setItem(KEY,c?'1':'0');
+  });
+  // 系统分组:点按钮展开,状态记忆;当前页在系统内时服务端已加 open
+  var st=document.getElementById('sysNavToggle'), sn=document.querySelector('.sysnav');
+  if(st && sn){
+    st.addEventListener('click',function(){
+      var open=sn.classList.toggle('open');
+      st.setAttribute('aria-expanded', open?'true':'false');
+    });
+  }
+})();
+</script>
+<div class="shell">
+  <div class="content">
+    <div class="pagehead">
+      <h1>{{ title }}</h1>
+      {% if lead %}<p class="lead">{{ lead }}</p>{% endif %}
+    </div>
+    {% if flash %}<div class="flash {{ flash[0] }}" role="status">{{ flash[1] }}</div>{% endif %}
+    {% block body %}{% endblock %}
+  </div>
+</div>
+</body>
+</html>

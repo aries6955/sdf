@@ -23,7 +23,19 @@ CREATE TABLE IF NOT EXISTS meters (
     level TEXT NOT NULL CHECK (level IN ('main', 'sub')),
     main_meter_id INTEGER REFERENCES meters(id),
     household_id INTEGER REFERENCES households(id),
+    phase TEXT NOT NULL DEFAULT 'single' CHECK (phase IN ('single', 'three')),
     active INTEGER NOT NULL DEFAULT 1,
+    note TEXT NOT NULL DEFAULT ''
+);
+
+-- 租期:记录哪块表从哪个读数起归哪个租户。交接读数既是上任终读数,也是新租户起始读数。
+CREATE TABLE IF NOT EXISTS takeovers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meter_id INTEGER NOT NULL REFERENCES meters(id),
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    start_date TEXT NOT NULL,
+    start_value INTEGER NOT NULL,
+    reading_id INTEGER REFERENCES readings(id),
     note TEXT NOT NULL DEFAULT ''
 );
 
@@ -36,6 +48,9 @@ CREATE TABLE IF NOT EXISTS readings (
     tenant_price REAL NOT NULL DEFAULT 0,
     billed INTEGER NOT NULL DEFAULT 0,
     is_initial INTEGER NOT NULL DEFAULT 0,
+    r1 INTEGER,
+    r2 INTEGER,
+    r3 INTEGER,
     note TEXT NOT NULL DEFAULT ''
 );
 
@@ -43,8 +58,8 @@ CREATE INDEX IF NOT EXISTS idx_readings_meter_date ON readings(meter_id, reading
 
 CREATE TABLE IF NOT EXISTS meter_switches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    old_meter_id INTEGER NOT NULL REFERENCES meters(id),
-    new_meter_id INTEGER NOT NULL REFERENCES meters(id),
+    old_meter_id INTEGER REFERENCES meters(id),
+    new_meter_id INTEGER REFERENCES meters(id),
     switch_date TEXT NOT NULL,
     old_final_value INTEGER NOT NULL,
     new_base_value INTEGER NOT NULL,
@@ -94,6 +109,35 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE payments ADD COLUMN unit_price REAL NOT NULL DEFAULT 0")
     if "reading_value" not in cols:
         conn.execute("ALTER TABLE payments ADD COLUMN reading_value INTEGER")
+    mcols = {r["name"] for r in conn.execute("PRAGMA table_info(meters)")}
+    if "phase" not in mcols:
+        conn.execute("ALTER TABLE meters ADD COLUMN phase TEXT NOT NULL DEFAULT 'single'")
+    rcols = {r["name"] for r in conn.execute("PRAGMA table_info(readings)")}
+    for col in ("r1", "r2", "r3"):
+        if col not in rcols:
+            conn.execute(f"ALTER TABLE readings ADD COLUMN {col} INTEGER")
+    _backfill_takeovers(conn)
+
+
+def _backfill_takeovers(conn: sqlite3.Connection) -> None:
+    """给旧数据补租期记录:每块已绑定租户的表,以其基数读数作为租期起点。"""
+    has_rows = conn.execute("SELECT 1 FROM takeovers LIMIT 1").fetchone()
+    if has_rows:
+        return
+    for m in conn.execute(
+        "SELECT id, household_id FROM meters WHERE household_id IS NOT NULL"
+    ).fetchall():
+        base = conn.execute(
+            "SELECT id, reading_date, value FROM readings WHERE meter_id=? AND is_initial=1 "
+            "ORDER BY reading_date, id LIMIT 1", (m["id"],)
+        ).fetchone()
+        if base:
+            conn.execute(
+                "INSERT INTO takeovers(meter_id,household_id,start_date,start_value,reading_id,note) "
+                "VALUES (?,?,?,?,?,?)",
+                (m["id"], m["household_id"], base["reading_date"], base["value"],
+                 base["id"], "历史数据回填"),
+            )
 
 
 def get_setting(conn: sqlite3.Connection, key: str, default: str = "") -> str:

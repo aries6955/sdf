@@ -34,6 +34,13 @@
                   <option value="">不归属租户</option>
                   {% for hh in households %}<option value="{{ hh.id }}"{% if x.household_id == hh.id %} selected{% endif %}>{{ hh.name }}</option>{% endfor %}
                 </select></div>
+              {% if x.meter_type == 'electricity' %}
+              <div class="field"><label for="m-phase-{{ x.id }}">电表制式</label>
+                <select id="m-phase-{{ x.id }}" name="phase">
+                  <option value="single"{% if x.phase != 'three' %} selected{% endif %}>单相(1 个读数)</option>
+                  <option value="three"{% if x.phase == 'three' %} selected{% endif %}>三相(3 个读数相加)</option>
+                </select></div>
+              {% endif %}
               <div class="field"><label for="m-active-{{ x.id }}">状态</label>
                 <select id="m-active-{{ x.id }}" name="active">
                   <option value="1"{% if x.active %} selected{% endif %}>使用中</option>
@@ -75,6 +82,8 @@
         <select id="m-new-type" name="meter_type"><option value="water">水</option><option value="electricity">电</option></select></div>
       <div class="field"><label for="m-new-level">级别</label>
         <select id="m-new-level" name="level"><option value="sub">分表(计费)</option><option value="main">总表(对账)</option></select></div>
+      <div class="field" id="phaseField" style="display:none"><label for="m-new-phase">电表制式</label>
+        <select id="m-new-phase" name="phase"><option value="single">单相(1 个读数)</option><option value="three">三相(3 个读数相加)</option></select></div>
       <div class="field"><label for="m-new-main">所属总表</label>
         <select id="m-new-main" name="main_meter_id"><option value="">不归属总表</option>
           {% for m in rows if m.level == 'main' %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
@@ -99,7 +108,7 @@
           {% for x in rows %}<option value="{{ x.id }}">{{ x.name }} · {{ type_name(x.meter_type) }}{{ level_name(x.level) }}</option>{% endfor %}
         </select></div>
       <div class="field"><label for="base-date">起始日期</label><input id="base-date" type="date" name="reading_date" value="{{ today }}" required></div>
-      <div class="field"><label for="base-value">起始读数</label><input id="base-value" type="number" name="value" required placeholder="表上当前读数"></div>
+      <div class="field"><label for="base-value">起始读数</label><input id="base-value" type="number" name="value" required placeholder="表上当前读数(三相表填三相之和)"></div>
       <div class="field"><label for="base-price">租户单价</label>
         <input id="base-price" type="number" step="0.0001" name="tenant_price" placeholder="留空=沿用上次">
         <span class="assist">房东向租户收取的单价</span></div>

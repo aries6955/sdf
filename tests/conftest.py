@@ -46,7 +46,8 @@ def _setup(client, houses="房东*\n租户A\n租户B", meters=None, bases=None):
     for line in houses.strip().splitlines():
         name = line.strip().rstrip("*").strip()
         if name:
-            client.post("/households/add", data={"name": name})
+            client.post("/households/add", data={"name": name, "note": "",
+                                                 "start_date": "2025-01-01"})
 
     houses_ids = _ids(client)[1]
     meter_ids: dict[str, int] = {}
@@ -79,11 +80,10 @@ def _setup(client, houses="房东*\n租户A\n租户B", meters=None, bases=None):
         mid = _ids(client)[0].get(parts[0])
         if not mid:
             continue
-        client.post("/readings/add", data={
+        # 基数走 /meters/base:写入 is_initial 读数并建立租期
+        client.post("/meters/base", data={
             "meter_id": str(mid), "reading_date": parts[1], "value": parts[2],
-            "department_price": parts[3] if len(parts) > 3 else "",
             "tenant_price": parts[4] if len(parts) > 4 else "",
-            "is_initial": "1",
         })
 
 

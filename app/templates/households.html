@@ -32,7 +32,7 @@
           <td>
             <div class="rowactions">
               <a class="btn ghost small" href="/households?edit={{ x.id }}">修改</a>
-              <form method="post" action="/households/delete" onsubmit="return confirm('删除租户 {{ x.name }}?若其名下还有分表,分表会失去归属。')">
+              <form method="post" action="/households/delete" onsubmit="return confirm('删除租户 {{ x.name }}?其名下分表将解绑,历史读数保留。')">
                 <input type="hidden" name="id" value="{{ x.id }}">
                 <button class="danger small" type="submit">删除</button>
               </form>
@@ -48,14 +48,63 @@
 
 <section class="card">
   <h2>新增租户</h2>
+  <p class="hint">
+    勾选该租户使用的表并填写交接起始读数 —— 它是本租户计费的起点。
+    勾选已被其他租户持有的表,会把表转给新租户;上一任的账单历史仍保留。
+  </p>
   <form method="post" action="/households/add">
     <div class="formgrid">
       <div class="field"><label for="hh-new-name">租户名称</label>
         <input id="hh-new-name" name="name" required placeholder="例如:张三 / 3栋201"></div>
       <div class="field"><label for="hh-new-note">备注</label>
         <input id="hh-new-note" name="note" placeholder="选填"></div>
+      <div class="field"><label for="hh-start">入住日期</label>
+        <input id="hh-start" type="date" name="start_date" value="{{ today }}" required></div>
     </div>
-    <div class="actions"><button type="submit">保存</button></div>
+    <p class="card-section-title" style="margin-top:14px">使用的表与交接起始读数</p>
+    <div class="tablewrap">
+      <table id="bindtable">
+        <thead><tr><th style="width:34px">选用</th><th>表</th><th>类型</th><th>当前持有人</th><th>最近读数</th><th>交接起始读数</th></tr></thead>
+        <tbody>
+          {% if not meters %}<tr><td colspan="6" class="empty">还没有表,请先到「表设置」新增。</td></tr>{% endif %}
+          {% for m in meters %}
+          <tr>
+            <td><input type="checkbox" class="bind-check" name="meter_ids" value="{{ m.id }}"
+                       data-name="{{ m.name }}" style="width:auto" aria-label="选用 {{ m.name }}"></td>
+            <td>{{ m.name }}</td>
+            <td>{{ type_name(m.meter_type) }}{{ level_name(m.level) }}{% if m.phase == 'three' %} · 三相{% endif %}</td>
+            <td>{{ m.holder or '—' }}</td>
+            <td class="num">{{ '{:,}'.format(m.last_value) if m.last_value is not none else '—' }}</td>
+            <td><input class="bind-base" type="number" name="base_values" placeholder="勾选后填写"
+                       aria-label="{{ m.name }} 交接起始读数" disabled></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="actions"><button type="submit">新增租户</button></div>
   </form>
+  <script>
+  (function(){
+    var rows=document.querySelectorAll('#bindtable tbody tr');
+    rows.forEach(function(tr){
+      var chk=tr.querySelector('.bind-check'), inp=tr.querySelector('.bind-base');
+      if(!chk||!inp) return;
+      chk.addEventListener('change',function(){
+        inp.disabled=!chk.checked;
+        inp.placeholder=chk.checked?'交接读数(必填)':'勾选后填写';
+      });
+    });
+    document.querySelector('form[action="/households/add"]').addEventListener('submit',function(e){
+      var checked=document.querySelectorAll('.bind-check:checked');
+      var missing=false;
+      checked.forEach(function(chk){
+        var inp=chk.closest('tr').querySelector('.bind-base');
+        if(!inp.value){ missing=true; inp.focus(); }
+      });
+      if(missing){ e.preventDefault(); alert('勾选的表都要填写交接起始读数'); }
+    });
+  })();
+  </script>
 </section>
 {% endblock %}

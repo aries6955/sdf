@@ -57,7 +57,8 @@ def test_price_carried_from_previous_reading(client):
         (meters["分水A"],),
     ).fetchone()
     conn.close()
-    assert (dp, tp) == (5, 10)
+    # 部门单价已移到缴费时录入(ADR-0009),抄表只继承租户单价
+    assert tp == 10
 
 
 def test_reading_must_increase(client):

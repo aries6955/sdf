@@ -51,7 +51,7 @@ PAYMENTS = [
 
 
 def clear_all(conn) -> None:
-    for table in ("adjustments", "payments", "meter_switches", "readings",
+    for table in ("adjustments", "payments", "takeovers", "meter_switches", "readings",
                   "meters", "households", "settings"):
         conn.execute(f"DELETE FROM {table}")
 
@@ -76,11 +76,19 @@ def load_sample(conn) -> None:
         ids[name] = cur.lastrowid
 
     for name, date, value, dp, tp in BASES:
-        conn.execute(
+        rc = conn.execute(
             "INSERT INTO readings(meter_id,reading_date,value,department_price,tenant_price,is_initial) "
             "VALUES (?,?,?,?,?,1)",
             (ids[name], date, value, dp, tp),
         )
+        hh_id = None
+        m = conn.execute("SELECT household_id FROM meters WHERE id=?", (ids[name],)).fetchone()
+        hh_id = m["household_id"] if m else None
+        if hh_id:
+            conn.execute(
+                "INSERT INTO takeovers(meter_id,household_id,start_date,start_value,reading_id,note) "
+                "VALUES (?,?,?,?,?,?)",
+                (ids[name], hh_id, date, value, rc.lastrowid, "示例数据"))
 
     for name, date, value, dp, tp in READINGS:
         conn.execute(

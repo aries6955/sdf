@@ -91,7 +91,7 @@ def test_adjustments_page_is_paginated(client):
                        (meters["分水A"],)).fetchone()[0]
     conn.close()
     client.post("/readings/bill", data={"id": str(rid)})
-    _make_adjustments(client, rid, households["租客A"])
+    _make_adjustments(client, rid, households["租户A"])
     html = client.get("/adjustments").text
     _assert_paginated(html, "冲正")
     # 合计 1+2+...+25 = 325
@@ -99,7 +99,7 @@ def test_adjustments_page_is_paginated(client):
 
 
 def test_statistics_detail_is_paginated(client):
-    _setup(client, houses="房东\n租客A", meters="总水,水,总,,\n分水A,水,分,总水,租客A")
+    _setup(client, houses="房东\n租户A", meters="总水,水,总,,\n分水A,水,分,总水,租户A")
     meters, _ = _ids(client)
     from datetime import date, timedelta
     base = date(2025, 1, 1)
@@ -115,7 +115,7 @@ def test_statistics_detail_is_paginated(client):
 
 def test_pagination_keeps_filters(client):
     """翻页时筛选条件不能丢。"""
-    _setup(client, houses="房东\n租客A", meters="总水,水,总,,\n分水A,水,分,总水,租客A")
+    _setup(client, houses="房东\n租户A", meters="总水,水,总,,\n分水A,水,分,总水,租户A")
     meters, _ = _ids(client)
     from datetime import date, timedelta
     base = date(2025, 1, 1)

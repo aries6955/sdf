@@ -156,7 +156,7 @@ def test_readings_filter_by_household(client):
     meters, households = _ids(client)
     _add(client, meters["分水A"], "2025-02-01", 130)
     _add(client, meters["分水B"], "2025-02-01", 260)
-    html = client.get(f"/readings?household_id={households['租客A']}").text
+    html = client.get(f"/readings?household_id={households['租户A']}").text
     rows = _table_rows(html)
     assert "分水A" in rows
     assert "分水B" not in rows

@@ -7,10 +7,10 @@
 
 <section class="card">
   <h2>表清单</h2>
-  <p class="hint">总表对上向供水/供电部门结算,不向住户计费;分表挂在住户名下,是计费的依据。</p>
+  <p class="hint">总表对上向供水/供电部门结算,不向租户计费;分表挂在租户名下,是计费的依据。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>表名</th><th>类型</th><th>级别</th><th>所属总表</th><th>归属住户</th><th>状态</th><th>操作</th></tr></thead>
+      <thead><tr><th>表名</th><th>类型</th><th>级别</th><th>所属总表</th><th>归属租户</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>
         {% if not rows %}<tr><td colspan="7" class="empty">还没有表,用下方表单添加。</td></tr>{% endif %}
         {% for x in rows %}
@@ -29,9 +29,9 @@
                   {% endfor %}
                 </select>
                 <span class="assist">仅分表需要归属总表</span></div>
-              <div class="field"><label for="m-hh-{{ x.id }}">归属住户</label>
+              <div class="field"><label for="m-hh-{{ x.id }}">归属租户</label>
                 <select id="m-hh-{{ x.id }}" name="household_id">
-                  <option value="">不归属住户</option>
+                  <option value="">不归属租户</option>
                   {% for hh in households %}<option value="{{ hh.id }}"{% if x.household_id == hh.id %} selected{% endif %}>{{ hh.name }}</option>{% endfor %}
                 </select></div>
               <div class="field"><label for="m-active-{{ x.id }}">状态</label>
@@ -47,7 +47,7 @@
         <tr>
           <td>{{ x.name }}</td>
           <td>{{ type_name(x.meter_type) }}</td>
-          <td>{% if x.level == 'main' %}<span class="tag muted">总表·不对住户计费</span>{% else %}<span class="tag accent">分表·计费用</span>{% endif %}</td>
+          <td>{% if x.level == 'main' %}<span class="tag muted">总表·不对租户计费</span>{% else %}<span class="tag accent">分表·计费用</span>{% endif %}</td>
           <td>{{ m_names.get(x.main_meter_id, '—') }}</td>
           <td>{{ hh_names.get(x.household_id, '—') }}</td>
           <td>{% if x.active %}<span class="tag ok">使用中</span>{% else %}<span class="tag muted">已停用</span>{% endif %}</td>
@@ -79,8 +79,8 @@
         <select id="m-new-main" name="main_meter_id"><option value="">不归属总表</option>
           {% for m in rows if m.level == 'main' %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
         </select></div>
-      <div class="field"><label for="m-new-hh">归属住户</label>
-        <select id="m-new-hh" name="household_id"><option value="">不归属住户</option>
+      <div class="field"><label for="m-new-hh">归属租户</label>
+        <select id="m-new-hh" name="household_id"><option value="">不归属租户</option>
           {% for hh in households %}<option value="{{ hh.id }}">{{ hh.name }}</option>{% endfor %}
         </select></div>
       <div class="field"><label for="m-new-note">备注</label><input id="m-new-note" name="note" placeholder="选填"></div>
@@ -100,9 +100,9 @@
         </select></div>
       <div class="field"><label for="base-date">起始日期</label><input id="base-date" type="date" name="reading_date" value="{{ today }}" required></div>
       <div class="field"><label for="base-value">起始读数</label><input id="base-value" type="number" name="value" required placeholder="表上当前读数"></div>
-      <div class="field"><label for="base-price">租客单价</label>
+      <div class="field"><label for="base-price">租户单价</label>
         <input id="base-price" type="number" step="0.0001" name="tenant_price" placeholder="留空=沿用上次">
-        <span class="assist">房东向住户收取的单价</span></div>
+        <span class="assist">房东向租户收取的单价</span></div>
     </div>
     <div class="actions"><button type="submit">保存起始读数</button></div>
   </form>

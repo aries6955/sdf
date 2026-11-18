@@ -39,7 +39,7 @@ def test_main_meter_never_charged_to_household(client):
     for name, value in [("总水", 1100), ("分水A", 130), ("分水B", 260)]:
         _add(client, meters[name], "2025-02-01", value)
     rows = _table_rows(client.get("/statistics").text)
-    # 总表不产生任何住户账单行(既无整笔计费,也无差额行)
+    # 总表不产生任何租户账单行(既无整笔计费,也无差额行)
     assert "差额" not in rows
     assert "总水" not in rows
     # 只有两个分表各自计费:30×10 与 60×10
@@ -180,11 +180,11 @@ def _table_rows(html: str) -> str:
 
 
 def test_statistics_filters(client):
-    _setup(client, meters="总水,水,总,,房东\n分水A,水,分,总水,租客A\n分水B,水,分,总水,租客B")
+    _setup(client, meters="总水,水,总,,房东\n分水A,水,分,总水,租户A\n分水B,水,分,总水,租户B")
     meters, households = _ids(client)
     for name, value in [("总水", 1100), ("分水A", 130), ("分水B", 260)]:
         _add(client, meters[name], "2025-02-01", value)
-    only_a = _table_rows(client.get(f"/statistics?household_id={households['租客A']}").text)
+    only_a = _table_rows(client.get(f"/statistics?household_id={households['租户A']}").text)
     assert "分水A" in only_a and "总水" not in only_a
     only_b = _table_rows(client.get(f"/statistics?meter_id={meters['分水B']}").text)
     assert "分水B" in only_b and "分水A" not in only_b
@@ -263,7 +263,7 @@ def test_sidebar_layout_present(client):
 
 
 def test_nav_grouping(client):
-    """住户/表设置/设置收入可折叠的系统面板;日常记账不含低频项。"""
+    """租户/表设置/设置收入可折叠的系统面板;日常记账不含低频项。"""
     html = client.get("/").text
     sysnav = re.search(r'<nav class="sidegroup sysnav.*?</nav>', html, re.S).group(0)
     # 收起状态:首页时系统面板不含 open
@@ -307,7 +307,7 @@ def test_sample_data_billing_is_correct(client):
     assert "159.50" in rows
     # 张三电 2 月: 1260-1120=140 × 1.1 = 154.00
     assert "154.00" in rows
-    # 总表不得出现在住户账单里
+    # 总表不得出现在租户账单里
     assert "总水表" not in rows and "总电表" not in rows
     # 李四没有电表,不应有电费行
     assert not any("李四" in r and "电" in r for r in rows.split("<tr>"))
@@ -393,7 +393,7 @@ def test_clear_requires_confirmation(client):
 
 
 def test_init_page_has_no_bulk_textareas(client):
-    """批量录入文本框已移除,改用住户/表设置页面与抄表页。"""
+    """批量录入文本框已移除,改用租户/表设置页面与抄表页。"""
     html = client.get("/init").text
     for action in ["/init/households", "/init/meters", "/init/bases"]:
         assert action not in html, action

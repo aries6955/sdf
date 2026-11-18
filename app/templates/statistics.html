@@ -11,8 +11,8 @@
           <option value="water"{% if type == 'water' %} selected{% endif %}>只看水</option>
           <option value="electricity"{% if type == 'electricity' %} selected{% endif %}>只看电</option>
         </select></div>
-      <div class="field"><label for="s-hh">住户</label>
-        <select id="s-hh" name="household_id"><option value="">全部住户</option>
+      <div class="field"><label for="s-hh">租户</label>
+        <select id="s-hh" name="household_id"><option value="">全部租户</option>
           {% for x in households %}<option value="{{ x.id }}"{% if household_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
         </select></div>
       <div class="field"><label for="s-meter">分表</label>
@@ -49,7 +49,7 @@
   <h2>明细(共 {{ total_rows }} 条·第 {{ page }}/{{ pages }} 页)</h2>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>住户</th><th>分表</th><th>账期</th><th>用量</th><th>单价</th><th>金额(元)</th><th>状态</th></tr></thead>
+      <thead><tr><th>租户</th><th>分表</th><th>账期</th><th>用量</th><th>单价</th><th>金额(元)</th><th>状态</th></tr></thead>
       <tbody>
         {% if not page_rows %}<tr><td colspan="7" class="empty">没有符合条件的记录,试试放宽筛选条件。</td></tr>{% endif %}
         {% for x in page_rows %}
@@ -71,7 +71,7 @@
 
 <section class="card">
   <h2>冲正汇总</h2>
-  <p class="hint">按住户累计的调整金额,已计入上方的应收净额。</p>
+  <p class="hint">按租户累计的调整金额,已计入上方的应收净额。</p>
   <ul class="plain">
     {% if adjustments %}{% for x in adjustments %}<li>{{ x.name }}: {{ money(x.total) }} 元</li>{% endfor %}
     {% else %}<li>无</li>{% endif %}

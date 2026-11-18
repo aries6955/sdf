@@ -210,13 +210,13 @@ def init_page(request: Request, msg: str = "", ok: str = ""):
         meters = conn.execute("SELECT * FROM meters ORDER BY id").fetchall()
         counts = {
             label: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for label, table in [("住户", "households"), ("表", "meters"),
+            for label, table in [("租户", "households"), ("表", "meters"),
                                  ("抄表", "readings"), ("缴费", "payments")]
         }
         bad = [x["name"] for x in households if _looks_broken(x["name"])]
         bad += [x["name"] for x in meters if _looks_broken(x["name"])]
     return render("init.html", title="系统设置",
-                  lead="房产名称、登录密码、示例数据与数据清空。住户与表请在左侧「系统」中维护。",
+                  lead="房产名称、登录密码、示例数据与数据清空。租户与表请在左侧「系统」中维护。",
                   active="init", name=name, counts=counts, bad=bad,
                   flash=flash_from(msg, ok))
 
@@ -258,7 +258,7 @@ def init_password(old_password: str = Form(...), new_password: str = Form(...),
     return RedirectResponse("/init?ok=" + quote("密码已修改,下次登录请使用新密码"), status_code=303)
 
 
-# ---------- 住户 ----------
+# ---------- 租户 ----------
 
 @app.get("/households", response_class=HTMLResponse)
 def households_page(request: Request, edit: int = Query(0), msg: str = "", ok: str = ""):
@@ -273,7 +273,7 @@ def households_page(request: Request, edit: int = Query(0), msg: str = "", ok: s
             )
         }
     editing = next((x for x in rows if x["id"] == edit), None)
-    return render("households.html", title="住户", lead="维护被收费的住户名单。",
+    return render("households.html", title="租户", lead="维护被收费的租户名单。",
                   active="households", rows=rows, meter_counts=meter_counts,
                   editing=editing, flash=flash_from(msg, ok))
 
@@ -282,7 +282,7 @@ def households_page(request: Request, edit: int = Query(0), msg: str = "", ok: s
 def household_add(name: str = Form(...), note: str = Form("")):
     with connect() as conn:
         conn.execute("INSERT INTO households(name,note) VALUES (?,?)", (name.strip(), note.strip()))
-    return RedirectResponse("/households?ok=" + quote("住户已添加"), status_code=303)
+    return RedirectResponse("/households?ok=" + quote("租户已新增"), status_code=303)
 
 
 @app.post("/households/edit")
@@ -292,14 +292,14 @@ def household_edit(id: int = Form(...), name: str = Form(""), note: str = Form("
         if row:
             conn.execute("UPDATE households SET name=?, note=? WHERE id=?",
                          (name.strip() or row["name"], note.strip(), id))
-    return RedirectResponse("/households?ok=" + quote("住户已更新"), status_code=303)
+    return RedirectResponse("/households?ok=" + quote("租户已更新"), status_code=303)
 
 
 @app.post("/households/delete")
 def household_delete(id: int = Form(...)):
     with connect() as conn:
         conn.execute("DELETE FROM households WHERE id=?", (id,))
-    return RedirectResponse("/households?ok=" + quote("住户已删除"), status_code=303)
+    return RedirectResponse("/households?ok=" + quote("租户已删除"), status_code=303)
 
 
 # ---------- 表设置 ----------
@@ -316,7 +316,7 @@ def meters_page(request: Request, edit: int = Query(0), msg: str = "", ok: str =
     m_names = {x["id"]: x["name"] for x in rows}
     editing = next((x for x in rows if x["id"] == edit), None)
     return render("meters.html", title="表设置",
-                  lead="维护水表与电表,以及它们与总表、住户的关系。",
+                  lead="维护水表与电表,以及它们与总表、租户的关系。",
                   active="meters", rows=rows, households=households,
                   hh_names=hh_names, m_names=m_names, editing=editing,
                   today=today, flash=flash_from(msg, ok))
@@ -417,7 +417,7 @@ def readings_page(request: Request, msg: str = Query(""), ok: str = Query(""), e
             f"JOIN meters m ON r.meter_id = m.id {clause}", params
         ).fetchone()
 
-        # 金额合计:基于全部命中记录,用量 × 租客单价
+        # 金额合计:基于全部命中记录,用量 × 租户单价
         all_rows = conn.execute(
             f"SELECT r.* FROM readings r JOIN meters m ON r.meter_id = m.id "
             f"{clause} ORDER BY r.reading_date, r.id", params
@@ -602,7 +602,7 @@ def switches_page(request: Request, msg: str = "", ok: str = "", page: int = 1):
         meters = [dict(x) for x in conn.execute("SELECT * FROM meters ORDER BY meter_type, level, id")]
     names = {x["id"]: x["name"] for x in meters}
     return render("switches.html", title="换表",
-                  lead="住户的表损坏或到期更换时,在这里登记新旧表的衔接。",
+                  lead="租户的表损坏或到期更换时,在这里登记新旧表的衔接。",
                   active="switches", rows=rows, meters=meters, names=names,
                   total=total, page=page, pages=pages, pager=pager, today=today,
                   flash=flash_from(msg, ok))
@@ -858,7 +858,7 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
     page_rows = rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
 
     return render("statistics.html", title="统计与查询",
-                  lead="按住户、表、账期或出账状态查询用量与费用。",
+                  lead="按租户、表、账期或出账状态查询用量与费用。",
                   active="statistics", type=type, household_id=household_id,
                   meter_id=meter_id, date_from=date_from, date_to=date_to,
                   billed=billed, qs=qs, households=households, meters=meters,
@@ -886,7 +886,7 @@ def statistics_pdf(type: str = Query("all"), household_id: str = Query(""),
         pdf.add_font("cjk", fname=font_path)
         pdf.set_font("cjk", size=10)
         title = "水电费统计报表"
-        headers = ["住户", "分表", "账期起", "账期止", "用量", "单价", "金额(元)", "状态"]
+        headers = ["租户", "分表", "账期起", "账期止", "用量", "单价", "金额(元)", "状态"]
     else:
         pdf.set_font("Helvetica", size=9)
         title = "Utility Bill Report"

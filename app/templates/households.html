@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% block body %}
 <section class="card">
-  <h2>住户名单</h2>
-  <p class="hint">住户是收水电费的对象。每户可以挂一块或多块分表。</p>
+  <h2>租户名单</h2>
+  <p class="hint">租户是收水电费的对象。每户可以挂一块或多块分表。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>住户名称</th><th>分表</th><th>备注</th><th>操作</th></tr></thead>
+      <thead><tr><th>租户名称</th><th>分表</th><th>备注</th><th>操作</th></tr></thead>
       <tbody>
         {% if not rows %}
-        <tr><td colspan="4" class="empty">还没有住户,用下方表单添加。</td></tr>
+        <tr><td colspan="4" class="empty">还没有租户,用下方表单添加。</td></tr>
         {% endif %}
         {% for x in rows %}
         {% if editing and editing.id == x.id %}
@@ -16,7 +16,7 @@
           <form method="post" action="/households/edit">
             <input type="hidden" name="id" value="{{ x.id }}">
             <div class="formgrid">
-              <div class="field"><label for="hh-name-{{ x.id }}">住户名称</label>
+              <div class="field"><label for="hh-name-{{ x.id }}">租户名称</label>
                 <input id="hh-name-{{ x.id }}" name="name" value="{{ x.name }}" required></div>
               <div class="field"><label for="hh-note-{{ x.id }}">备注</label>
                 <input id="hh-note-{{ x.id }}" name="note" value="{{ x.note }}" placeholder="选填"></div>
@@ -32,7 +32,7 @@
           <td>
             <div class="rowactions">
               <a class="btn ghost small" href="/households?edit={{ x.id }}">修改</a>
-              <form method="post" action="/households/delete" onsubmit="return confirm('删除住户 {{ x.name }}?若其名下还有分表,分表会失去归属。')">
+              <form method="post" action="/households/delete" onsubmit="return confirm('删除租户 {{ x.name }}?若其名下还有分表,分表会失去归属。')">
                 <input type="hidden" name="id" value="{{ x.id }}">
                 <button class="danger small" type="submit">删除</button>
               </form>
@@ -47,10 +47,10 @@
 </section>
 
 <section class="card">
-  <h2>新增住户</h2>
+  <h2>新增租户</h2>
   <form method="post" action="/households/add">
     <div class="formgrid">
-      <div class="field"><label for="hh-new-name">住户名称</label>
+      <div class="field"><label for="hh-new-name">租户名称</label>
         <input id="hh-new-name" name="name" required placeholder="例如:张三 / 3栋201"></div>
       <div class="field"><label for="hh-new-note">备注</label>
         <input id="hh-new-note" name="note" placeholder="选填"></div>

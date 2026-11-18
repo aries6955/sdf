@@ -16,7 +16,7 @@ NAV = [
     ("日常记账", [("readings", "/readings", "抄表", "✎"),
                   ("payments", "/payments", "缴费", "¥")]),
     ("查询", [("statistics", "/statistics", "统计与查询", "▤")]),
-    ("系统", [("households", "/households", "住户", "☰"),
+    ("系统", [("households", "/households", "租户", "☰"),
               ("meters", "/meters", "表设置", "▣"),
               ("init", "/init", "设置", "⚙")]),
 ]

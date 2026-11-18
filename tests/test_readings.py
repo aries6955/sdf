@@ -33,8 +33,8 @@ def test_entry_form_is_above_records(client):
 
 def test_records_are_paginated_not_300(client):
     """记录必须分页,不能一次渲染几百条把页面拉长。"""
-    _setup(client, meters="总水,水,总,,\n分水A,水,分,总水,租客A",
-           houses="房东\n租客A")
+    _setup(client, meters="总水,水,总,,\n分水A,水,分,总水,租户A",
+           houses="房东\n租户A")
     meters, _ = _ids(client)
     from datetime import date, timedelta
     base = date(2025, 1, 1)
@@ -88,8 +88,8 @@ def test_filter_by_date_range(client):
 
 def test_totals_reflect_filter_not_page(client):
     """合计必须基于全部命中记录,而不是当前页。"""
-    _setup(client, houses="房东\n租客A",
-           meters="总水,水,总,,\n分水A,水,分,总水,租客A")
+    _setup(client, houses="房东\n租户A",
+           meters="总水,水,总,,\n分水A,水,分,总水,租户A")
     meters, _ = _ids(client)
     # 用递进的唯一日期,避免重复日期被校验拦掉
     from datetime import date, timedelta

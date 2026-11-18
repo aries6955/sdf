@@ -33,13 +33,13 @@ def _ids(client):
     return meters, households
 
 
-def _setup(client, houses="房东*\n租客A\n租客B", meters=None, bases=None):
+def _setup(client, houses="房东*\n租户A\n租户B", meters=None, bases=None):
     """通过真实页面接口建数据。
 
     houses / meters / bases 用逗号分隔的字符串,便于测试读懂。
     """
     if meters is None:
-        meters = "总水,水,总,,房东\n分水A,水,分,总水,租客A\n分水B,水,分,总水,租客B"
+        meters = "总水,水,总,,房东\n分水A,水,分,总水,租户A\n分水B,水,分,总水,租户B"
     if bases is None:
         bases = "总水,2025-01-01,1000,5,10\n分水A,2025-01-01,100,5,10\n分水B,2025-01-01,200,5,10"
 

@@ -25,7 +25,7 @@ def _meter_periods(conn, meter_id: int):
 
 def household_period_usage(conn, household_id: int, meter_type: str) -> list[dict]:
     """All billable periods for a household and utility type, as usage+cost rows."""
-    # 总表只用于与部门缴费对账,不产生住户账单,因此排除 level='main'
+    # 总表只用于与部门缴费对账,不产生租户账单,因此排除 level='main'
     meters = conn.execute(
         "SELECT * FROM meters WHERE household_id = ? AND meter_type = ? AND level = 'sub' ORDER BY id",
         (household_id, meter_type),

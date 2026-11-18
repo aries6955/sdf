@@ -11,7 +11,7 @@
           {% for x in billed %}<option value="{{ x.id }}">{{ x.meter_name }} {{ x.reading_date }} 读数 {{ '{:,}'.format(x.value) }}</option>{% endfor %}
         </select>
         {% else %}<input disabled placeholder="暂无已出账账单">{% endif %}</div>
-      <div class="field"><label for="adj-hh">住户</label>
+      <div class="field"><label for="adj-hh">租户</label>
         <select id="adj-hh" name="household_id" required>
           {% for hh in households %}<option value="{{ hh.id }}">{{ hh.name }}</option>{% endfor %}
         </select></div>
@@ -40,7 +40,7 @@
   <p class="hint">已出账的账期不能改读数或单价,只能用冲正记录做加减调整,原账单保持不变。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>日期</th><th>住户</th><th>关联账单</th><th>调整金额(元)</th><th>原因</th><th>操作</th></tr></thead>
+      <thead><tr><th>日期</th><th>租户</th><th>关联账单</th><th>调整金额(元)</th><th>原因</th><th>操作</th></tr></thead>
       <tbody>
         {% if not rows %}<tr><td colspan="6" class="empty">还没有冲正记录。</td></tr>{% endif %}
         {% for x in rows %}

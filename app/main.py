@@ -400,13 +400,13 @@ def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: 
                b_1: str = Form(""), b_2: str = Form(""), b_3: str = Form(""),
                tenant_price: str = Form("")):
     with connect() as conn:
-        # 已有抄表记录的表不允许重设基数,否则用量会被算错
-        has = conn.execute(
-            "SELECT 1 FROM readings WHERE meter_id=? AND is_initial=0 LIMIT 1", (meter_id,)
+        # 基数一经设置不可修改(账目起点不能漂移);换表用「换表」功能
+        has_base = conn.execute(
+            "SELECT 1 FROM readings WHERE meter_id=? AND is_initial=1 LIMIT 1", (meter_id,)
         ).fetchone()
-        if has:
+        if has_base:
             return RedirectResponse(
-                "/meters?msg=" + quote("该表已有抄表记录,不能用起始读数重置。请改用「换表」。"),
+                "/meters?msg=" + quote("该表的起始读数已设置且不可修改。表坏了请用「换表」。"),
                 status_code=303)
         meter = conn.execute("SELECT * FROM meters WHERE id=?", (meter_id,)).fetchone()
         r1 = r2 = r3 = None

@@ -14,9 +14,10 @@ def test_dates_default_to_today(client):
     # 录入类:必须默认今天
     assert f'name="reading_date" value="{today}"' in client.get("/readings").text
     assert f'name="payment_date" value="{today}"' in client.get("/payments").text
-    assert f'name="reading_date" value="{today}"' in client.get("/meters").text
     assert f'name="switch_date" value="{today}"' in client.get("/switches").text
     assert f'name="adjust_date" value="{today}"' in client.get("/adjustments").text
+    # 独立的起始读数卡片已移除:交接读数在新增租户时填写
+    assert f'name="start_date" value="{today}"' in client.get("/households").text
 
 
 def test_every_date_input_has_a_value(client):
@@ -39,11 +40,30 @@ def test_reading_form_has_no_department_price(client):
     assert "作为起始读数" not in add_form
 
 
-def test_base_entry_lives_in_meters_page(client):
-    _setup(client)
+def test_base_card_removed_handover_is_entry_point(client):
+    """独立的起始读数卡片已移除;基数在新增租户(交接读数)时产生,且不可修改。"""
     html = client.get("/meters").text
-    assert 'action="/meters/base"' in html
-    assert "设置起始读数" in html
+    assert 'action="/meters/base"' not in html, "表设置页不应再有起始读数卡片"
+    assert "设置起始读数" not in html
+    # 入口在租户页
+    assert 'action="/households/add"' in client.get("/households").text
+    assert "交接起始读数" in client.get("/households").text
+
+
+def test_base_is_immutable(client):
+    """基数一经设置不可修改(即使表还没有其他抄表记录)。"""
+    _setup(client)
+    meters, _ = _ids(client)
+    from urllib.parse import unquote
+    r = client.post("/meters/base", data={"meter_id": str(meters["分水A"]),
+                                          "reading_date": "2025-06-01", "value": "999"},
+                    follow_redirects=False)
+    assert "不可修改" in unquote(r.headers["location"])
+    conn = sqlite3.connect(db.DB_PATH)
+    v = conn.execute("select value from readings where meter_id=? and is_initial=1",
+                     (meters["分水A"],)).fetchone()[0]
+    conn.close()
+    assert v == 100, "基数被篡改了"
 
 
 def test_payment_auto_computes_amount(client):

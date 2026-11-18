@@ -87,8 +87,9 @@ def test_adjustments_page_is_paginated(client):
     meters, households = _ids(client)
     _add(client, meters["分水A"], "2025-02-01", 130)
     conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute("select id from readings where meter_id=? and is_initial=0",
-                       (meters["分水A"],)).fetchone()[0]
+    rid = conn.execute(
+        "select id from readings where meter_id=? and is_initial=0 and value=130",
+        (meters["分水A"],)).fetchone()[0]
     conn.close()
     client.post("/readings/bill", data={"id": str(rid)})
     _make_adjustments(client, rid, households["租户A"])

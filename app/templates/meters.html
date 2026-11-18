@@ -7,7 +7,7 @@
 
 <section class="card">
   <h2>表清单</h2>
-  <p class="hint">总表对上向供水/供电部门结算,不向租户计费;分表挂在租户名下,是计费的依据。</p>
+  <p class="hint">总表对上向供水/供电部门结算,不向租户计费;分表的归属租户在「新增租户」时勾选绑定,此处只读展示。</p>
   <div class="tablewrap">
     <table>
       <thead><tr><th>表名</th><th>类型</th><th>级别</th><th>所属总表</th><th>归属租户</th><th>状态</th><th>操作</th></tr></thead>
@@ -29,11 +29,7 @@
                   {% endfor %}
                 </select>
                 <span class="assist">仅分表需要归属总表</span></div>
-              <div class="field"><label for="m-hh-{{ x.id }}">归属租户</label>
-                <select id="m-hh-{{ x.id }}" name="household_id">
-                  <option value="">不归属租户</option>
-                  {% for hh in households %}<option value="{{ hh.id }}"{% if x.household_id == hh.id %} selected{% endif %}>{{ hh.name }}</option>{% endfor %}
-                </select></div>
+
               {% if x.meter_type == 'electricity' %}
               <div class="field"><label for="m-phase-{{ x.id }}">电表制式</label>
                 <select id="m-phase-{{ x.id }}" name="phase">
@@ -88,10 +84,7 @@
         <select id="m-new-main" name="main_meter_id"><option value="">不归属总表</option>
           {% for m in rows if m.level == 'main' %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
         </select></div>
-      <div class="field"><label for="m-new-hh">归属租户</label>
-        <select id="m-new-hh" name="household_id"><option value="">不归属租户</option>
-          {% for hh in households %}<option value="{{ hh.id }}">{{ hh.name }}</option>{% endfor %}
-        </select></div>
+
       <div class="field"><label for="m-new-note">备注</label><input id="m-new-note" name="note" placeholder="选填"></div>
     </div>
     <div class="actions"><button type="submit">保存</button></div>

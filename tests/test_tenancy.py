@@ -36,8 +36,8 @@ def test_new_tenant_binds_meters_with_base_readings(client):
     n = conn.execute("select count(*) from takeovers").fetchone()[0]
     conn.close()
     assert holder == "王五"
-    # conftest 只给分表建基数租期(2 条)+ 本次交接 1 条
-    assert n == 3
+    # 房东/租户A/租户B 各 1 条基数租期 + 本次交接 1 条
+    assert n == 4
 
 
 def test_tenant_takeover_splits_billing(client):
@@ -81,20 +81,16 @@ def test_old_tenant_history_survives_takeover(client):
 
 
 def test_three_phase_meter_sums_readings(client):
-    """三相电表:三个读数相加作为一个读数计费。"""
-    _setup(client, houses="房东\n租户A",
-           meters="总电,电,总,,\n分电A,电,分,总电,租户A")
+    """三相电表:交接分相建基,抄表三相相加计费。"""
+    client.post("/households/add", data={"name": "房东", "note": "", "start_date": "2025-01-01"})
+    client.post("/meters/add", data={"name": "总电", "meter_type": "electricity", "level": "main"})
+    client.post("/meters/add", data={"name": "分电A", "meter_type": "electricity",
+                                     "level": "sub", "main_meter_id": "2", "phase": "three"})
     meters, _ = _ids(client)
-    # 把分电A 设为三相
-    conn = sqlite3.connect(db.DB_PATH)
-    conn.execute("update meters set phase='three' where id=?", (meters["分电A"],))
-    conn.commit()
-    conn.close()
-    # 基数:三相分相录入,合计 300(用 /meters/base)
-    client.post("/meters/base", data={"meter_id": str(meters["分电A"]),
-                                      "reading_date": "2025-01-01",
-                                      "b_1": "100", "b_2": "100", "b_3": "100",
-                                      "tenant_price": "1"})
+    # 交接:三相 100/100/100 → 基数 300,单价 1
+    _create_tenant_with_meters(client, "租户A", [(meters["分电A"], (100, 100, 100))],
+                               date="2025-01-01")
+    client.post("/households/add", data={"name": "租户A占位2", "note": "", "start_date": "2025-01-02"})
     # 抄表:三相 120/130/110 → 合计 360,用量 60 × 1 = 60 元
     client.post("/readings/add", data={
         "meter_id": str(meters["分电A"]), "reading_date": "2025-02-01",
@@ -102,7 +98,7 @@ def test_three_phase_meter_sums_readings(client):
     })
     conn = sqlite3.connect(db.DB_PATH)
     value, r1, r2, r3 = conn.execute(
-        "select value, r1, r2, r3 from readings where meter_id=? and is_initial=0",
+        "select value, r1, r2, r3 from readings where meter_id=? and reading_date='2025-02-01'",
         (meters["分电A"],)).fetchone()
     conn.close()
     assert (value, r1, r2, r3) == (360, 120, 130, 110)
@@ -119,16 +115,22 @@ def test_three_phase_rejects_per_phase_decrease(client):
     conn.commit()
     conn.close()
     client.post("/readings/add", data={
-        "meter_id": str(meters["分电A"]), "reading_date": "2025-01-01",
+        "meter_id": str(meters["分电A"]), "reading_date": "2025-02-01",
         "value_1": "100", "value_2": "100", "value_3": "100",
     })
     # 第二次某相倒退(90 < 100)应被拒
     from urllib.parse import unquote
     r = client.post("/readings/add", data={
-        "meter_id": str(meters["分电A"]), "reading_date": "2025-02-01",
+        "meter_id": str(meters["分电A"]), "reading_date": "2025-03-01",
         "value_1": "90", "value_2": "110", "value_3": "110",
     }, follow_redirects=False)
     assert "某一相" in unquote(r.headers["location"])
+    # 日期/相序都合法的读数应被接受
+    r2 = client.post("/readings/add", data={
+        "meter_id": str(meters["分电A"]), "reading_date": "2025-03-01",
+        "value_1": "110", "value_2": "110", "value_3": "110",
+    }, follow_redirects=False)
+    assert "msg=" not in (r2.headers.get("location") or "")
 
 
 def test_meter_delete_cleans_dependencies(client):
@@ -176,20 +178,48 @@ def test_three_phase_tenant_handover_stores_components(client):
 
 
 def test_three_phase_base_via_meters_base(client):
-    """表设置起始读数:三相表用 b_1/b_2/b_3,基数行保留分相。"""
+    """未绑定租户的三相表:表设置接口用 b_1/b_2/b_3 设基数,分相留档。"""
+    client.post("/meters/add", data={"name": "备用电表", "meter_type": "electricity",
+                                     "level": "sub", "phase": "three"})
+    meters, _ = _ids(client)
+    client.post("/meters/base", data={"meter_id": str(meters["备用电表"]),
+                                      "reading_date": "2025-01-01",
+                                      "b_1": "50", "b_2": "60", "b_3": "70",
+                                      "tenant_price": "2"})
+    conn = sqlite3.connect(db.DB_PATH)
+    row = conn.execute(
+        "select value, r1, r2, r3, is_initial from readings where meter_id=?",
+        (meters["备用电表"],)).fetchone()
+    conn.close()
+    assert row == (180, 50, 60, 70, 1)
+
+
+def test_bind_form_lists_meters_with_holders(client):
+    """新增租户表单应列出可选的表、当前持有人与最近读数。"""
+    _setup(client)
+    html = client.get("/households").text
+    assert "交接起始读数" in html
+    assert "当前持有人" in html
+    assert 'name="meter_ids"' in html
+    assert 'name="base_' in html
+
+
+def test_three_phase_tenant_handover_stores_components(client):
+    """新增租户绑定三相表:分相录入,存三相之和并留档 r1/r2/r3。"""
     _setup(client, houses="房东\n租户A", meters="总电,电,总,,\n分电A,电,分,总电,租户A")
     meters, _ = _ids(client)
     conn = sqlite3.connect(db.DB_PATH)
     conn.execute("update meters set phase='three' where id=?", (meters["分电A"],))
     conn.commit()
     conn.close()
-    client.post("/meters/base", data={"meter_id": str(meters["分电A"]),
-                                      "reading_date": "2025-01-01",
-                                      "b_1": "50", "b_2": "60", "b_3": "70",
-                                      "tenant_price": "2"})
+    r = _create_tenant_with_meters(client, "租户B", [(meters["分电A"], (100, 110, 120))])
+    assert r.status_code == 200
     conn = sqlite3.connect(db.DB_PATH)
-    value, r1, r2, r3 = conn.execute(
-        "select value, r1, r2, r3 from readings where meter_id=? and is_initial=1",
-        (meters["分电A"],)).fetchone()
+    value, r1, r2, r3, note = conn.execute(
+        "select value, r1, r2, r3, note from readings where meter_id=? "
+        "order by id desc limit 1", (meters["分电A"],)).fetchone()
+    t = conn.execute("select start_value from takeovers where meter_id=? "
+                     "order by id desc limit 1", (meters["分电A"],)).fetchone()[0]
     conn.close()
-    assert (value, r1, r2, r3) == (180, 50, 60, 70)
+    assert (value, r1, r2, r3) == (330, 100, 110, 120)
+    assert t == 330

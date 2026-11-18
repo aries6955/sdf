@@ -60,10 +60,13 @@ def test_base_is_immutable(client):
                     follow_redirects=False)
     assert "不可修改" in unquote(r.headers["location"])
     conn = sqlite3.connect(db.DB_PATH)
-    v = conn.execute("select value from readings where meter_id=? and is_initial=1",
+    v = conn.execute("select value from readings where meter_id=? and reading_date='2025-06-01'",
+                     (meters["分水A"],)).fetchone()
+    t = conn.execute("select start_value from takeovers where meter_id=?", 
                      (meters["分水A"],)).fetchone()[0]
     conn.close()
-    assert v == 100, "基数被篡改了"
+    assert v is None, "基数被重设了"
+    assert t == 100, "租期起点被篡改了"
 
 
 def test_payment_auto_computes_amount(client):

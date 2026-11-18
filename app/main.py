@@ -340,7 +340,8 @@ async def household_add(request: Request):
             last = conn.execute(
                 "SELECT tenant_price FROM readings WHERE meter_id=? "
                 "ORDER BY reading_date DESC, id DESC LIMIT 1", (mid,)).fetchone()
-            tp = last["tenant_price"] if last else 0.0
+            raw_price = str(form.get(f"price_{mid}", "") or "")
+            tp = float(raw_price) if raw_price else (last["tenant_price"] if last else 0.0)
             rc = conn.execute(
                 "INSERT INTO readings(meter_id,reading_date,value,tenant_price,r1,r2,r3,note) "
                 "VALUES (?,?,?,?,?,?,?,?)",
@@ -400,11 +401,14 @@ def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: 
                b_1: str = Form(""), b_2: str = Form(""), b_3: str = Form(""),
                tenant_price: str = Form("")):
     with connect() as conn:
-        # 基数一经设置不可修改(账目起点不能漂移);换表用「换表」功能
+        # 基数/交接读数一经设置不可修改(账目起点不能漂移);换表用「换表」功能
         has_base = conn.execute(
             "SELECT 1 FROM readings WHERE meter_id=? AND is_initial=1 LIMIT 1", (meter_id,)
         ).fetchone()
-        if has_base:
+        has_takeover = conn.execute(
+            "SELECT 1 FROM takeovers WHERE meter_id=? LIMIT 1", (meter_id,)
+        ).fetchone()
+        if has_base or has_takeover:
             return RedirectResponse(
                 "/meters?msg=" + quote("该表的起始读数已设置且不可修改。表坏了请用「换表」。"),
                 status_code=303)
@@ -449,16 +453,15 @@ def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: 
 
 @app.post("/meters/add")
 def meter_add(name: str = Form(...), meter_type: str = Form(...), level: str = Form(...),
-              main_meter_id: str = Form(""), household_id: str = Form(""),
-              phase: str = Form("single"), note: str = Form("")):
+              main_meter_id: str = Form(""), phase: str = Form("single"), note: str = Form("")):
+    """新增表;归属租户不在表设置里定,只在新增租户的交接时绑定。"""
     if meter_type != "electricity":
         phase = "single"   # 只有电表分单相/三相
     with connect() as conn:
         conn.execute(
-            "INSERT INTO meters(name,meter_type,level,main_meter_id,household_id,phase,note) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,note) "
+            "VALUES (?,?,?,?,?,?)",
             (name.strip(), meter_type, level, int(main_meter_id) if main_meter_id else None,
-             int(household_id) if household_id else None,
              phase if phase in ("single", "three") else "single", note.strip()),
         )
     return RedirectResponse("/meters?ok=" + quote("表已新增"), status_code=303)
@@ -466,13 +469,14 @@ def meter_add(name: str = Form(...), meter_type: str = Form(...), level: str = F
 
 @app.post("/meters/edit")
 def meter_edit(id: int = Form(...), name: str = Form(""), main_meter_id: str = Form(""),
-               household_id: str = Form(""), active: str = Form("1"), note: str = Form("")):
+               active: str = Form("1"), note: str = Form("")):
     with connect() as conn:
+        # 不在此处修改归属租户:绑定只在新增租户/换表交接时发生
         conn.execute(
             "UPDATE meters SET name=COALESCE(NULLIF(?,''),name), main_meter_id=?, "
-            "household_id=?, active=?, note=? WHERE id=?",
+            "active=?, note=? WHERE id=?",
             (name.strip(), int(main_meter_id) if main_meter_id else None,
-             int(household_id) if household_id else None, int(active), note.strip(), id),
+             int(active), note.strip(), id),
         )
     return RedirectResponse("/meters?ok=" + quote("表已更新"), status_code=303)
 
@@ -522,6 +526,12 @@ def readings_page(request: Request, msg: str = Query(""), ok: str = Query(""), e
                 where.append("r.billed = 1")
             elif billed == "0":
                 where.append("r.billed = 0")
+        # 交接读数是租期边界:不属于任何待出账/已出账筛选,页面上显示为起点
+        boundary_ids = [r["reading_id"] for r in conn.execute(
+            "SELECT reading_id FROM takeovers WHERE reading_id IS NOT NULL")]
+        if billed in ("0", "1") and boundary_ids:
+            where.append(f"r.id NOT IN ({','.join('?' * len(boundary_ids))})")
+            params.extend(boundary_ids)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
 
         agg = conn.execute(
@@ -667,6 +677,9 @@ def reading_edit(id: int = Form(...), reading_date: str = Form(""), value: str =
         if row["billed"]:
             return RedirectResponse(
                 "/readings?msg=" + quote("已出账的记录不能修改,请改用「冲正」。"), status_code=303)
+        if conn.execute("SELECT 1 FROM takeovers WHERE reading_id=?", (id,)).fetchone():
+            return RedirectResponse(
+                "/readings?msg=" + quote("交接读数是租期边界,不能修改。"), status_code=303)
         meter = conn.execute("SELECT * FROM meters WHERE id=?", (row["meter_id"],)).fetchone()
         r1 = r2 = r3 = None
         if meter["phase"] == "three":
@@ -727,6 +740,9 @@ def reading_delete(id: int = Form(...)):
         if row and row["billed"]:
             return RedirectResponse("/readings?msg=" + quote("已出账的记录不能删除,请改用冲正。"),
                                     status_code=303)
+        if conn.execute("SELECT 1 FROM takeovers WHERE reading_id=?", (id,)).fetchone():
+            return RedirectResponse(
+                "/readings?msg=" + quote("交接读数是租期边界,不能删除。"), status_code=303)
         conn.execute("DELETE FROM readings WHERE id=? AND billed=0", (id,))
     return RedirectResponse("/readings?ok=" + quote("抄表记录已删除"), status_code=303)
 

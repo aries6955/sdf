@@ -73,7 +73,8 @@ def household_period_usage(conn, household_id: int, meter_type: str) -> list[dic
             conn, household_id=household_id, meter_type=meter_type):
         meter = conn.execute(
             "SELECT * FROM meters WHERE id = ?", (boundary["meter_id"],)).fetchone()
-        if not meter:
+        # 总表只用于部门对账,不产生租户账单(ADR-0008/0010)
+        if not meter or meter["level"] == "main":
             continue
         window = [r for r in _meter_readings(conn, meter["id"]) if r["id"] > boundary["id"]]
         if next_boundary is not None:

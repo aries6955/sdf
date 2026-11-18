@@ -33,58 +33,75 @@ def _ids(client):
     return meters, households
 
 
-def _setup(client, houses="房东*\n租户A\n租户B", meters=None, bases=None):
-    """通过真实页面接口建数据。
+def _mid(client, name):
+    return _ids(client)[0][name]
 
-    houses / meters / bases 用逗号分隔的字符串,便于测试读懂。
+
+def _setup(client, houses="房东*\n租户A\n租户B", meters=None, bases=None):
+    """通过真实页面接口建数据(绑定只在新增租户时发生)。
+
+    houses: 每行一户,行尾 * 忽略。
+    meters: 每行 `名称,水/电,总/分,所属总表,租户名`。
+    bases:  每行 `表名,日期,读数,部门单价,租户单价`。
     """
     if meters is None:
         meters = "总水,水,总,,房东\n分水A,水,分,总水,租户A\n分水B,水,分,总水,租户B"
     if bases is None:
         bases = "总水,2025-01-01,1000,5,10\n分水A,2025-01-01,100,5,10\n分水B,2025-01-01,200,5,10"
 
-    for line in houses.strip().splitlines():
-        name = line.strip().rstrip("*").strip()
-        if name:
-            client.post("/households/add", data={"name": name, "note": "",
-                                                 "start_date": "2025-01-01"})
-
-    houses_ids = _ids(client)[1]
-    meter_ids: dict[str, int] = {}
-    rows = [[p.strip() for p in l.split(",")] for l in meters.strip().splitlines() if l.strip()]
-    for row in rows:
-        if len(row) >= 3 and row[2] in ("总", "main"):
-            client.post("/meters/add", data={
-                "name": row[0],
-                "meter_type": "water" if row[1] in ("水", "water") else "electricity",
-                "level": "main",
-            })
-            meter_ids[row[0]] = _ids(client)[0][row[0]]
-    for row in rows:
-        if len(row) >= 3 and row[2] not in ("总", "main"):
-            main_name = row[3] if len(row) > 3 else ""
-            hh_name = row[4] if len(row) > 4 else ""
-            client.post("/meters/add", data={
-                "name": row[0],
-                "meter_type": "water" if row[1] in ("水", "water") else "electricity",
-                "level": "sub",
-                "main_meter_id": str(meter_ids.get(main_name, "")),
-                "household_id": str(houses_ids.get(hh_name, "")),
-            })
-            meter_ids[row[0]] = _ids(client)[0][row[0]]
-
+    base_map = {}
     for line in bases.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 3:
+            base_map[parts[0]] = parts
+
+    # 先建表(不绑定租户;归属只在新增租户时发生)
+    for line in meters.strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 3:
             continue
-        mid = _ids(client)[0].get(parts[0])
-        if not mid:
+        payload = {"name": parts[0],
+                   "meter_type": "water" if parts[1] in ("水", "water") else "electricity",
+                   "level": "main" if parts[2] in ("总", "main") else "sub"}
+        if len(parts) > 3 and parts[3]:
+            payload["main_meter_id"] = str(_mid(client, parts[3]))
+        client.post("/meters/add", data=payload)
+
+    # 解析每户的表与基数
+    house_meters: dict[str, list[str]] = {}
+    unbound = []
+    for line in meters.strip().splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 3:
             continue
-        # 基数走 /meters/base:写入 is_initial 读数并建立租期
-        client.post("/meters/base", data={
-            "meter_id": str(mid), "reading_date": parts[1], "value": parts[2],
-            "tenant_price": parts[4] if len(parts) > 4 else "",
-        })
+        name, kind, level = parts[0], parts[1], parts[2]
+        hh = parts[4] if len(parts) > 4 else ""
+        if hh:
+            house_meters.setdefault(hh, []).append(name)
+        else:
+            unbound.append(name)
+
+    # 逐户新增租户并绑定其表(交接读数即基数,单价随交接录入)
+    for line in houses.strip().splitlines():
+        hh_name = line.strip().rstrip("*").strip()
+        if not hh_name:
+            continue
+        data = {"name": hh_name, "note": "", "start_date": "2025-01-01"}
+        for mname in house_meters.get(hh_name, []):
+            mid = _mid(client, mname)
+            b = base_map.get(mname, [None, "2025-01-01", "0", "", "0"])
+            data["meter_ids"] = data.get("meter_ids", []) + [str(mid)]
+            data[f"base_{mid}"] = b[2]
+            data[f"price_{mid}"] = b[4] if len(b) > 4 else ""
+        client.post("/households/add", data=data)
+
+    # 未绑定表的基数走 /meters/base(基数接口保留为 API)
+    for mname in unbound:
+        b = base_map.get(mname)
+        if b:
+            client.post("/meters/base", data={
+                "meter_id": _mid(client, mname), "reading_date": b[1],
+                "value": b[2], "tenant_price": b[4] if len(b) > 4 else ""})
 
 
 def _add(client, meter, date, value, **kw):

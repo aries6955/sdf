@@ -65,8 +65,9 @@ def test_filter_by_status(client):
     meters, _ = _ids(client)
     _add(client, meters["分水A"], "2025-02-01", 130)
     conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute("select id from readings where meter_id=? and is_initial=0",
-                       (meters["分水A"],)).fetchone()[0]
+    rid = conn.execute(
+        "select id from readings where meter_id=? and is_initial=0 and value=130",
+        (meters["分水A"],)).fetchone()[0]
     conn.close()
     client.post("/readings/bill", data={"id": str(rid)})
 
@@ -103,6 +104,12 @@ def test_totals_reflect_filter_not_page(client):
     html = client.get("/readings?billed=0").text
     m = re.search(r"命中记录</div><div class=\"v\">(\d+)", html)
     total = re.search(r"读数合计</div><div class=\"v\">([\d,]+)", html)
-    assert m and int(m.group(1)) == 25, m.group(1) if m else "未找到命中记录"
-    assert total and int(total.group(1).replace(",", "")) == sum(values), (
-        total.group(1) if total else "未找到读数合计")
+    # 期望含交接读数(值 100):独立从 DB 取真值
+    conn = sqlite3.connect(db.DB_PATH)
+    exp_n, exp_sum = conn.execute(
+        "select count(*), coalesce(sum(value),0) from readings where meter_id=? "
+        "and is_initial=0 and id not in (select reading_id from takeovers "
+        "where reading_id is not null)", (meters["分水A"],)).fetchone()
+    conn.close()
+    assert m and int(m.group(1)) == exp_n
+    assert total and int(total.group(1).replace(",", "")) == exp_sum

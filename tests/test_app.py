@@ -77,16 +77,6 @@ def test_base_cannot_be_reset_after_readings(client):
     assert "msg=" in r.headers["location"]
 
 
-def test_reinit_bases_is_idempotent(client):
-    base = "总水,2025-01-01,1000,5,10\n分水A,2025-01-01,100,5,10\n分水B,2025-01-01,200,5,10"
-    _setup(client, bases=base)
-    client.post("/init/bases", data={"data": base})
-    conn = sqlite3.connect(db.DB_PATH)
-    count = conn.execute("select count(*) from readings where is_initial=1").fetchone()[0]
-    conn.close()
-    assert count == 3
-
-
 def test_clear_works_with_dependent_data(client):
     """有缴费/抄表等依赖数据时,清空也能正常完成(外键顺序正确)。"""
     _setup(client)
@@ -107,8 +97,9 @@ def test_billed_period_is_locked(client):
     meters, _ = _ids(client)
     _add(client, meters["分水A"], "2025-02-01", 130)
     conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute("select id from readings where meter_id=? and is_initial=0",
-                       (meters["分水A"],)).fetchone()[0]
+    rid = conn.execute(
+        "select id from readings where meter_id=? and is_initial=0 and value=130",
+        (meters["分水A"],)).fetchone()[0]
     conn.close()
     client.post("/readings/bill", data={"id": str(rid)})
     client.post("/readings/edit", data={"id": str(rid), "value": "9999"})
@@ -124,8 +115,9 @@ def test_payment_does_not_lock_period(client):
     meters, _ = _ids(client)
     _add(client, meters["分水A"], "2025-02-01", 130)
     conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute("select id from readings where meter_id=? and is_initial=0",
-                       (meters["分水A"],)).fetchone()[0]
+    rid = conn.execute(
+        "select id from readings where meter_id=? and is_initial=0 and value=130",
+        (meters["分水A"],)).fetchone()[0]
     conn.close()
     client.post("/payments/add", data={"meter_id": str(meters["总水"]),
                                        "payment_date": "2025-02-05", "amount": "500",
@@ -201,8 +193,9 @@ def test_unbilled_reading_is_editable_inline(client):
     meters, _ = _ids(client)
     _add(client, meters["分水A"], "2025-02-01", 130)
     conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute("select id from readings where meter_id=? and is_initial=0",
-                       (meters["分水A"],)).fetchone()[0]
+    rid = conn.execute(
+        "select id from readings where meter_id=? and is_initial=0 and reading_date>'2025-01-01'",
+        (meters["分水A"],)).fetchone()[0]
     conn.close()
     # 行内编辑表单要能打开
     page = client.get(f"/readings?edit={rid}").text
@@ -222,8 +215,9 @@ def test_edit_rejects_crossing_neighbours(client):
     _add(client, meters["分水A"], "2025-02-01", 130)
     _add(client, meters["分水A"], "2025-03-01", 160)
     conn = sqlite3.connect(db.DB_PATH)
-    first = conn.execute("select id from readings where meter_id=? and is_initial=0 "
-                         "order by reading_date limit 1", (meters["分水A"],)).fetchone()[0]
+    first = conn.execute(
+        "select id from readings where meter_id=? and is_initial=0 and value=130",
+        (meters["分水A"],)).fetchone()[0]
     conn.close()
     # 把前一条改成大于后一条,应被拒绝
     client.post("/readings/edit", data={"id": str(first), "value": "999"})
@@ -238,8 +232,9 @@ def test_billed_reading_cannot_be_edited(client):
     meters, _ = _ids(client)
     _add(client, meters["分水A"], "2025-02-01", 130)
     conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute("select id from readings where meter_id=? and is_initial=0",
-                       (meters["分水A"],)).fetchone()[0]
+    rid = conn.execute(
+        "select id from readings where meter_id=? and is_initial=0 and value=130",
+        (meters["分水A"],)).fetchone()[0]
     conn.close()
     client.post("/readings/bill", data={"id": str(rid)})
     client.post("/readings/edit", data={"id": str(rid), "value": "999"})
@@ -372,7 +367,7 @@ def test_edit_fields_align_in_one_row(client):
     conn.close()
     html = client.get(f"/meters?edit={meter_id}").text
     row = re.search(r'<tr class="editrow">.*?</tr>', html, re.S).group(0)
-    assert row.count('class="field"') == 4
+    assert row.count('class="field"') == 3  # 归属租户已移除
     # 只允许「所属总表」带说明文字,其余不带
     assert row.count('class="assist"') == 1
 

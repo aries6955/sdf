@@ -66,7 +66,11 @@
       <table id="bindtable">
         <thead><tr><th style="width:34px">选用</th><th>表</th><th>类型</th><th>当前持有人</th><th>最近读数</th><th>交接起始读数</th></tr></thead>
         <tbody>
-          {% if not meters %}<tr><td colspan="6" class="empty">还没有表,请先到「表设置」新增。</td></tr>{% endif %}
+          {% if not meters %}
+        <tr><td colspan="6" class="empty">
+          还没有表,无法绑定。<a href="/meters">先去「表设置」新增表</a>,回来这里勾选并填写交接基数。
+        </td></tr>
+        {% endif %}
           {% for m in meters %}
           <tr>
             <td><input type="checkbox" class="bind-check" name="meter_ids" value="{{ m.id }}"

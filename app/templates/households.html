@@ -5,14 +5,14 @@
   <p class="hint">租户是收水电费的对象。每户可以挂一块或多块分表。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>租户名称</th><th>分表</th><th>备注</th><th>操作</th></tr></thead>
+      <thead><tr><th>租户名称</th><th>分表</th><th>应收</th><th>实收</th><th>欠款</th><th>备注</th><th>操作</th></tr></thead>
       <tbody>
         {% if not rows %}
-        <tr><td colspan="4" class="empty">还没有租户,用下方表单添加。</td></tr>
+        <tr><td colspan="7" class="empty">还没有租户,用下方表单添加。</td></tr>
         {% endif %}
         {% for x in rows %}
         {% if editing and editing.id == x.id %}
-        <tr class="editrow"><td colspan="4">
+        <tr class="editrow"><td colspan="7">
           <form method="post" action="/households/edit">
             <input type="hidden" name="id" value="{{ x.id }}">
             <div class="formgrid">
@@ -28,9 +28,17 @@
         <tr>
           <td>{{ x.name }}</td>
           <td>{% if meter_counts.get(x.id) %}<span class="tag accent">{{ meter_counts[x.id] }} 块分表</span>{% else %}<span class="tag muted">无分表</span>{% endif %}</td>
+          {% set led = ledgers.get(x.id) %}
+          <td class="num">{{ money(led.due) if led else '0.00' }}</td>
+          <td class="num">{{ money(led.received) if led else '0.00' }}</td>
+          <td class="num">
+            {% if led and led.outstanding > 0.005 %}<span class="tag warn">{{ money(led.outstanding) }}</span>
+            {% else %}<span class="tag ok">0.00</span>{% endif %}
+          </td>
           <td class="wrap">{{ x.note or '—' }}</td>
           <td>
             <div class="rowactions">
+              <a class="btn ghost small" href="/households/{{ x.id }}/ledger">台账</a>
               <a class="btn ghost small" href="/households?edit={{ x.id }}">修改</a>
               <form method="post" action="/households/delete" onsubmit="return confirm('删除租户 {{ x.name }}?其名下分表将解绑,历史读数保留。')">
                 <input type="hidden" name="id" value="{{ x.id }}">

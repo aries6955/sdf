@@ -85,6 +85,17 @@
           {% for m in rows if m.level == 'main' %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
         </select></div>
 
+      <div class="field"><label for="m-base-date">基数日期</label>
+        <input id="m-base-date" type="date" name="base_date" value="{{ today }}" required></div>
+      <div class="field" id="baseSingleNew"><label for="m-base-value">表基数</label>
+        <input id="m-base-value" type="number" name="base_value" placeholder="装表时的读数">
+        <span class="assist">表自己的原点,除非换表否则不变</span></div>
+      <div class="field" id="baseThreeNew" style="display:none"><label>三相基数</label>
+        <div class="phase3">
+          <input type="number" name="base_1" placeholder="A相" aria-label="基数 A 相">
+          <input type="number" name="base_2" placeholder="B相" aria-label="基数 B 相">
+          <input type="number" name="base_3" placeholder="C相" aria-label="基数 C 相">
+        </div></div>
       <div class="field"><label for="m-new-note">备注</label><input id="m-new-note" name="note" placeholder="选填"></div>
     </div>
     <div class="actions"><button type="submit">保存</button></div>
@@ -92,9 +103,22 @@
   <script>
   (function(){
     var t=document.getElementById('m-new-type'), pf=document.getElementById('phaseField');
-    if(!t||!pf) return;
-    function sync(){ pf.style.display = t.value==='electricity' ? '' : 'none'; }
-    t.addEventListener('change',sync); sync();
+    var ph=document.getElementById('m-new-phase');
+    var bs=document.getElementById('baseSingleNew'), bt=document.getElementById('baseThreeNew');
+    if(!t) return;
+    function sync(){
+      var isElec = t.value==='electricity';
+      pf.style.display = isElec ? '' : 'none';
+      if(!isElec) ph.value='single';
+      var three = isElec && ph.value==='three';
+      bt.style.display = three ? '' : 'none';
+      bs.style.display = three ? 'none' : '';
+      bt.querySelectorAll('input').forEach(function(x){x.required=three;});
+      document.getElementById('m-base-value').required = !three;
+    }
+    t.addEventListener('change',sync);
+    if(ph) ph.addEventListener('change',sync);
+    sync();
   })();
   </script>
 </section>

@@ -55,14 +55,16 @@ def _setup(client, houses="房东*\n租户A\n租户B", meters=None, bases=None):
         if len(parts) >= 3:
             base_map[parts[0]] = parts
 
-    # 先建表(不绑定租户;归属只在新增租户时发生)
+    # 先建表(基数在建表时录入;归属只在新增租户时发生)
     for line in meters.strip().splitlines():
         parts = [p.strip() for p in line.split(",")]
         if len(parts) < 3:
             continue
+        b = base_map.get(parts[0], [None, "2025-01-01", "0"])
         payload = {"name": parts[0],
                    "meter_type": "water" if parts[1] in ("水", "water") else "electricity",
-                   "level": "main" if parts[2] in ("总", "main") else "sub"}
+                   "level": "main" if parts[2] in ("总", "main") else "sub",
+                   "base_date": b[1], "base_value": b[2]}
         if len(parts) > 3 and parts[3]:
             payload["main_meter_id"] = str(_mid(client, parts[3]))
         client.post("/meters/add", data=payload)

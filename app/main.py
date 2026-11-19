@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .billing import all_statistics
+from .ledger import household_ledger, all_outstanding, receipt_total
 from .views import render
 from .db import connect, get_setting, init_db, set_setting
 from .sample import clear_all, load_sample
@@ -193,6 +194,7 @@ def index(request: Request):
         last = conn.execute(
             "SELECT MAX(reading_date) FROM readings WHERE is_initial=0"
         ).fetchone()[0]
+        outstanding_total = round(sum(x["outstanding"] for x in all_outstanding(conn)), 2)
         rows = all_statistics(conn, "water") + all_statistics(conn, "electricity")
         billed_sum = round(sum(x["amount"] for x in rows if x["billed"]), 2)
         unbilled_sum = round(sum(x["amount"] for x in rows if not x["billed"]), 2)
@@ -283,10 +285,16 @@ def households_page(request: Request, edit: int = Query(0), msg: str = "", ok: s
             )
         }
         # 可绑定表:显示现持有人与最近读数,便于交接
+        ledgers = {}
+        for h in rows:
+            led = household_ledger(conn, h["id"])
+            ledgers[h["id"]] = {"due": led["total_due"], "received": led["total_received"],
+                                "outstanding": led["outstanding"], "items": len(led["rows"])}
         meters = []
         for m in conn.execute(
             "SELECT m.*, h.name AS holder FROM meters m "
-            "LEFT JOIN households h ON m.household_id = h.id ORDER BY m.meter_type, m.level, m.id"):
+            "LEFT JOIN households h ON m.household_id = h.id "
+            "WHERE m.level = 'sub' ORDER BY m.meter_type, m.level, m.id"):
             d = dict(m)
             last = conn.execute(
                 "SELECT value FROM readings WHERE meter_id=? ORDER BY reading_date DESC, id DESC LIMIT 1",
@@ -296,9 +304,70 @@ def households_page(request: Request, edit: int = Query(0), msg: str = "", ok: s
     editing = next((x for x in rows if x["id"] == edit), None)
     return render("households.html", title="租户", lead="维护被收费的租户名单。",
                   active="households", rows=rows, meter_counts=meter_counts,
-                  meters=meters, editing=editing,
+                  meters=meters, editing=editing, ledgers=ledgers,
                   today=date.today().isoformat(),
                   flash=flash_from(msg, ok))
+
+
+@app.get("/households/{household_id}/ledger", response_class=HTMLResponse)
+def household_ledger_page(request: Request, household_id: int, msg: str = "", ok: str = ""):
+    """某租户的收费台账:应收 / 实收 / 欠款。"""
+    if r := require_login(request):
+        return r
+    with connect() as conn:
+        h = conn.execute("SELECT * FROM households WHERE id=?", (household_id,)).fetchone()
+        if not h:
+            return RedirectResponse("/households?msg=" + quote("租户不存在"), status_code=303)
+        ledger = household_ledger(conn, household_id)
+        meters = [dict(x) for x in conn.execute(
+            "SELECT m.*, t.start_date, t.start_value FROM meters m "
+            "LEFT JOIN takeovers t ON t.meter_id = m.id AND t.household_id = ? "
+            "WHERE m.household_id = ? AND m.level='sub' ORDER BY m.id",
+            (household_id, household_id))]
+    return render("household_ledger.html", title=f"{h['name']} · 收费台账",
+                  lead="应收、实收与欠款。收款可多次,金额可小于应收。",
+                  active="households", household=dict(h), ledger=ledger, meters=meters,
+                  today=date.today().isoformat(), flash=flash_from(msg, ok))
+
+
+@app.post("/receipts/add")
+def receipt_add(receivable_id: int = Form(...), receipt_date: str = Form(...),
+                amount: float = Form(...), note: str = Form("")):
+    with connect() as conn:
+        rec = conn.execute("SELECT * FROM receivables WHERE id=?", (receivable_id,)).fetchone()
+        if not rec:
+            return RedirectResponse("/households?msg=" + quote("应收记录不存在"), status_code=303)
+        if amount <= 0:
+            return RedirectResponse(
+                f"/households/{rec['household_id']}/ledger?msg=" + quote("收款金额要大于 0"),
+                status_code=303)
+        already = receipt_total(conn, receivable_id)
+        if already + amount > round(rec["amount"], 2) + 0.005:
+            return RedirectResponse(
+                f"/households/{rec['household_id']}/ledger?msg="
+                + quote(f"收款超额:应收 {rec['amount']:.2f},已收 {already:.2f}"),
+                status_code=303)
+        conn.execute(
+            "INSERT INTO receipts(receivable_id,receipt_date,amount,note) VALUES (?,?,?,?)",
+            (receivable_id, receipt_date, round(amount, 2), note.strip()))
+        hh = rec["household_id"]
+    return RedirectResponse(f"/households/{hh}/ledger?ok=" + quote("收款已登记"), status_code=303)
+
+
+@app.post("/households/checkout")
+def household_checkout(id: int = Form(...)):
+    """退租:必须无欠款才可退租,并解绑表(历史台账保留)。"""
+    with connect() as conn:
+        led = household_ledger(conn, id)
+        if abs(led["outstanding"]) > 0.005:
+            return RedirectResponse(
+                f"/households/{id}/ledger?msg="
+                + quote(f"还有欠款 {led['outstanding']:.2f} 元未结清,不能退租"),
+                status_code=303)
+        # 解绑表但保留租期与台账历史
+        conn.execute("UPDATE meters SET household_id=NULL WHERE household_id=?", (id,))
+    return RedirectResponse("/households?ok=" + quote("已退租,表已解绑,历史台账保留"),
+                            status_code=303)
 
 
 @app.post("/households/add")
@@ -326,6 +395,12 @@ async def household_add(request: Request):
             meter = conn.execute("SELECT * FROM meters WHERE id=?", (mid,)).fetchone()
             if not meter:
                 continue
+            # 租户只绑分表;总表只用于部门对账
+            if meter["level"] != "sub":
+                conn.execute("DELETE FROM households WHERE id=?", (hh_id,))
+                return RedirectResponse(
+                    "/households?msg=" + quote(f"「{meter['name']}」是总表,不能分配给租户"),
+                    status_code=303)
             r1 = r2 = r3 = None
             if meter["phase"] == "three":
                 try:
@@ -348,8 +423,15 @@ async def household_add(request: Request):
                         "/households?msg=" + quote(
                             f"表「{meter['name']}」需要填写交接起始读数"), status_code=303)
             last = conn.execute(
-                "SELECT tenant_price FROM readings WHERE meter_id=? "
+                "SELECT value, tenant_price FROM readings WHERE meter_id=? "
                 "ORDER BY reading_date DESC, id DESC LIMIT 1", (mid,)).fetchone()
+            # 新租户基数不得小于该表上次读数
+            if last and start_val < last["value"]:
+                conn.execute("DELETE FROM households WHERE id=?", (hh_id,))
+                return RedirectResponse(
+                    "/households?msg=" + quote(
+                        f"「{meter['name']}」的基数 {start_val} 小于该表上次读数 {last['value']},请核对"),
+                    status_code=303)
             raw_price = str(form.get(f"price_{mid}", "") or "")
             tp = float(raw_price) if raw_price else (last["tenant_price"] if last else 0.0)
             rc = conn.execute(
@@ -463,18 +545,45 @@ def meter_base(meter_id: int = Form(...), reading_date: str = Form(...), value: 
 
 @app.post("/meters/add")
 def meter_add(name: str = Form(...), meter_type: str = Form(...), level: str = Form(...),
-              main_meter_id: str = Form(""), phase: str = Form("single"), note: str = Form("")):
-    """新增表;归属租户不在表设置里定,只在新增租户的交接时绑定。"""
+              main_meter_id: str = Form(""), phase: str = Form("single"),
+              base_date: str = Form(...),
+              base_value: str = Form(""), base_1: str = Form(""), base_2: str = Form(""),
+              base_3: str = Form(""), note: str = Form("")):
+    """新增表即录基数(表自己的原点,类似新表的 0),除非换表否则不变。"""
     if meter_type != "electricity":
         phase = "single"   # 只有电表分单相/三相
+    phase = phase if phase in ("single", "three") else "single"
+    if phase == "three":
+        try:
+            b1, b2, b3 = int(base_1), int(base_2), int(base_3)
+        except (TypeError, ValueError):
+            return RedirectResponse(
+                "/meters?msg=" + quote("三相电表需分别填写三个基数"), status_code=303)
+        if min(b1, b2, b3) < 0:
+            return RedirectResponse("/meters?msg=" + quote("基数不能为负"), status_code=303)
+        base_total, br1, br2, br3 = b1 + b2 + b3, b1, b2, b3
+    else:
+        try:
+            base_total = int(base_value)
+        except (TypeError, ValueError):
+            return RedirectResponse("/meters?msg=" + quote("请填写表基数"), status_code=303)
+        br1 = br2 = br3 = None
+    if base_total < 0:
+        return RedirectResponse("/meters?msg=" + quote("基数不能为负"), status_code=303)
     with connect() as conn:
-        conn.execute(
-            "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,note) "
-            "VALUES (?,?,?,?,?,?)",
+        cur = conn.execute(
+            "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,base_value,base_date,note) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             (name.strip(), meter_type, level, int(main_meter_id) if main_meter_id else None,
-             phase if phase in ("single", "three") else "single", note.strip()),
+             phase, base_total, base_date, note.strip()),
         )
-    return RedirectResponse("/meters?ok=" + quote("表已新增"), status_code=303)
+        mid = cur.lastrowid
+        # 基数同时写成一条 is_initial 读数,计费首期用它做起点
+        conn.execute(
+            "INSERT INTO readings(meter_id,reading_date,value,is_initial,r1,r2,r3,note) "
+            "VALUES (?,?,?,1,?,?,?,?)",
+            (mid, base_date, base_total, br1, br2, br3, "表基数"))
+    return RedirectResponse("/meters?ok=" + quote("表已新增,基数已记录"), status_code=303)
 
 
 @app.post("/meters/edit")
@@ -738,9 +847,35 @@ def reading_edit(id: int = Form(...), reading_date: str = Form(""), value: str =
 
 @app.post("/readings/bill")
 def reading_bill(id: int = Form(...)):
+    """出账:锁定读数并生成一条应收。"""
     with connect() as conn:
+        row = conn.execute("SELECT * FROM readings WHERE id=?", (id,)).fetchone()
+        if not row:
+            return RedirectResponse("/readings?msg=" + quote("找不到该抄表记录"), status_code=303)
+        if row["billed"]:
+            return RedirectResponse("/readings?msg=" + quote("该记录已出账"), status_code=303)
+        meter = conn.execute("SELECT * FROM meters WHERE id=?", (row["meter_id"],)).fetchone()
+        if not meter or meter["level"] != "sub":
+            return RedirectResponse(
+                "/readings?msg=" + quote("总表不产生租户账单,无需出账"), status_code=303)
+        if not meter["household_id"]:
+            return RedirectResponse(
+                "/readings?msg=" + quote("该表未绑定租户,无法出账"), status_code=303)
+        # 本段用量 = 本次读数 − 该表上一条读数
+        prev = conn.execute(
+            "SELECT value, reading_date FROM readings WHERE meter_id=? AND id < ? "
+            "ORDER BY reading_date DESC, id DESC LIMIT 1", (row["meter_id"], id)).fetchone()
+        usage = row["value"] - (prev["value"] if prev else 0)
+        amount = round(usage * row["tenant_price"], 2)
         conn.execute("UPDATE readings SET billed=1 WHERE id=?", (id,))
-    return RedirectResponse("/readings?ok=" + quote("已出账,该记录已锁定"), status_code=303)
+        conn.execute(
+            "INSERT OR REPLACE INTO receivables(household_id,meter_id,reading_id,period_start,"
+            "period_end,usage_amount,unit_price,amount,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (meter["household_id"], meter["id"], id,
+             prev["reading_date"] if prev else (meter["base_date"] or row["reading_date"]),
+             row["reading_date"], usage, row["tenant_price"], amount,
+             date.today().isoformat()))
+    return RedirectResponse("/readings?ok=" + quote("已出账,应收已生成"), status_code=303)
 
 
 @app.post("/readings/delete")

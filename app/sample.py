@@ -51,7 +51,8 @@ PAYMENTS = [
 
 
 def clear_all(conn) -> None:
-    for table in ("adjustments", "payments", "takeovers", "meter_switches", "readings",
+    for table in ("receipts", "receivables", "adjustments", "payments", "takeovers",
+                  "meter_switches", "readings",
                   "meters", "households", "settings"):
         conn.execute(f"DELETE FROM {table}")
 

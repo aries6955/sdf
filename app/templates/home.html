@@ -6,6 +6,7 @@
   <div class="stat"><div class="k">已出账金额</div><div class="v">{{ money(billed_sum) }}<span class="u"> 元</span></div></div>
   <div class="stat"><div class="k">待出账金额</div><div class="v">{{ money(unbilled_sum) }}<span class="u"> 元</span></div></div>
   <div class="stat"><div class="k">已缴部门</div><div class="v">{{ money(paid) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">租户欠款</div><div class="v">{{ money(outstanding_total) }}<span class="u"> 元</span></div></div>
 </div>
 {% if not setup_done %}
 <div class="note">
@@ -26,6 +27,9 @@
     {% endif %}
     {% if adj_sum %}
     <li><a href="/adjustments">冲正累计 {{ money(adj_sum) }} 元</a>,已计入应收</li>
+    {% endif %}
+    {% if outstanding_total and outstanding_total > 0 %}
+    <li><a href="/households">有租户欠款 {{ money(outstanding_total) }} 元</a>,到租户台账查看明细</li>
     {% endif %}
     <li><a href="/statistics">查看统计与费用</a> — 共 {{ reading_count }} 条抄表记录</li>
   </ul>

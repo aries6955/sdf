@@ -72,7 +72,8 @@ def test_switches_page_is_paginated(client):
     _setup(client)
     meters, _ = _ids(client)
     client.post("/meters/add", data={"name": "新水表", "meter_type": "water",
-                                     "level": "sub", "main_meter_id": str(meters["总水"])})
+                                     "level": "sub", "main_meter_id": str(meters["总水"]),
+                                     "base_date": "2025-01-01", "base_value": "0"})
     conn = sqlite3.connect(db.DB_PATH)
     new_id = conn.execute("select id from meters where name='新水表'").fetchone()[0]
     conn.close()

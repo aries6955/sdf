@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS meters (
     main_meter_id INTEGER REFERENCES meters(id),
     household_id INTEGER REFERENCES households(id),
     phase TEXT NOT NULL DEFAULT 'single' CHECK (phase IN ('single', 'three')),
+    base_value INTEGER,
+    base_date TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     note TEXT NOT NULL DEFAULT ''
 );
@@ -78,6 +80,29 @@ CREATE TABLE IF NOT EXISTS payments (
     note TEXT NOT NULL DEFAULT ''
 );
 
+-- 应收:一次出账对应一条,金额固定;收款单独记录,可多次、可不收足
+CREATE TABLE IF NOT EXISTS receivables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    meter_id INTEGER NOT NULL REFERENCES meters(id),
+    reading_id INTEGER NOT NULL UNIQUE REFERENCES readings(id),
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    usage_amount INTEGER NOT NULL,
+    unit_price REAL NOT NULL,
+    amount REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- 实收:一次收款可覆盖一条应收,金额可小于应收(部分收款)
+CREATE TABLE IF NOT EXISTS receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    receivable_id INTEGER NOT NULL REFERENCES receivables(id),
+    receipt_date TEXT NOT NULL,
+    amount REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS adjustments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     reading_id INTEGER NOT NULL REFERENCES readings(id),
@@ -112,6 +137,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     mcols = {r["name"] for r in conn.execute("PRAGMA table_info(meters)")}
     if "phase" not in mcols:
         conn.execute("ALTER TABLE meters ADD COLUMN phase TEXT NOT NULL DEFAULT 'single'")
+    if "base_value" not in mcols:
+        conn.execute("ALTER TABLE meters ADD COLUMN base_value INTEGER")
+    if "base_date" not in mcols:
+        conn.execute("ALTER TABLE meters ADD COLUMN base_date TEXT")
     rcols = {r["name"] for r in conn.execute("PRAGMA table_info(readings)")}
     for col in ("r1", "r2", "r3"):
         if col not in rcols:

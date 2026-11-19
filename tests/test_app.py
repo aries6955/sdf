@@ -134,7 +134,8 @@ def test_switch_keeps_usage_and_prices(client):
     meters, _ = _ids(client)
     _add(client, meters["分水A"], "2025-02-01", 130)
     client.post("/meters/add", data={"name": "分水A新", "meter_type": "water", "level": "sub",
-                                    "main_meter_id": str(meters["总水"]), "household_id": "2"})
+                                    "main_meter_id": str(meters["总水"]),
+                                    "base_date": "2025-01-01", "base_value": "0"})
     conn = sqlite3.connect(db.DB_PATH)
     new_id = conn.execute("select id from meters where name='分水A新'").fetchone()[0]
     conn.close()

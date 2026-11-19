@@ -36,8 +36,8 @@ def test_new_tenant_binds_meters_with_base_readings(client):
     n = conn.execute("select count(*) from takeovers").fetchone()[0]
     conn.close()
     assert holder == "王五"
-    # 房东/租户A/租户B 各 1 条基数租期 + 本次交接 1 条
-    assert n == 4
+    # 租户A/租户B 各 1 条(分表),加本次交接 1 条
+    assert n == 3
 
 
 def test_tenant_takeover_splits_billing(client):
@@ -82,10 +82,13 @@ def test_old_tenant_history_survives_takeover(client):
 
 def test_three_phase_meter_sums_readings(client):
     """三相电表:交接分相建基,抄表三相相加计费。"""
-    client.post("/households/add", data={"name": "房东", "note": "", "start_date": "2025-01-01"})
-    client.post("/meters/add", data={"name": "总电", "meter_type": "electricity", "level": "main"})
+    client.post("/meters/add", data={"name": "总电", "meter_type": "electricity", "level": "main",
+                                     "base_date": "2025-01-01", "base_value": "0"})
+    main_id = _ids(client)[0]["总电"]
     client.post("/meters/add", data={"name": "分电A", "meter_type": "electricity",
-                                     "level": "sub", "main_meter_id": "2", "phase": "three"})
+                                     "level": "sub", "main_meter_id": str(main_id),
+                                     "phase": "three", "base_date": "2025-01-01",
+                                     "base_1": "0", "base_2": "0", "base_3": "0"})
     meters, _ = _ids(client)
     # 交接:三相 100/100/100 → 基数 300,单价 1
     _create_tenant_with_meters(client, "租户A", [(meters["分电A"], (100, 100, 100))],
@@ -177,21 +180,35 @@ def test_three_phase_tenant_handover_stores_components(client):
     assert t == 330
 
 
-def test_three_phase_base_via_meters_base(client):
-    """未绑定租户的三相表:表设置接口用 b_1/b_2/b_3 设基数,分相留档。"""
+def test_three_phase_base_via_meters_add(client):
+    """新增三相表时直接录三相基数,合计入库并保留分相。"""
     client.post("/meters/add", data={"name": "备用电表", "meter_type": "electricity",
-                                     "level": "sub", "phase": "three"})
+                                     "level": "sub", "phase": "three",
+                                     "base_date": "2025-01-01",
+                                     "base_1": "50", "base_2": "60", "base_3": "70"})
     meters, _ = _ids(client)
-    client.post("/meters/base", data={"meter_id": str(meters["备用电表"]),
-                                      "reading_date": "2025-01-01",
-                                      "b_1": "50", "b_2": "60", "b_3": "70",
-                                      "tenant_price": "2"})
     conn = sqlite3.connect(db.DB_PATH)
+    mv = conn.execute("select base_value, base_date from meters where id=?",
+                      (meters["备用电表"],)).fetchone()
     row = conn.execute(
         "select value, r1, r2, r3, is_initial from readings where meter_id=?",
         (meters["备用电表"],)).fetchone()
     conn.close()
+    assert mv == (180, "2025-01-01")
     assert row == (180, 50, 60, 70, 1)
+
+
+def test_meter_base_cannot_be_changed(client):
+    """表基数一经建立不可修改(除换表)。"""
+    client.post("/meters/add", data={"name": "备用水表", "meter_type": "water",
+                                     "level": "sub", "base_date": "2025-01-01",
+                                     "base_value": "10"})
+    meters, _ = _ids(client)
+    from urllib.parse import unquote
+    r = client.post("/meters/base", data={"meter_id": str(meters["备用水表"]),
+                                          "reading_date": "2025-06-01", "value": "999"},
+                    follow_redirects=False)
+    assert "不可修改" in unquote(r.headers["location"])
 
 
 def test_bind_form_lists_meters_with_holders(client):

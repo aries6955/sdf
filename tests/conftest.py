@@ -16,7 +16,7 @@ def client(tmp_path, monkeypatch):
     pw = tmp_path / "password.txt"
     pw.write_text(TEST_PASSWORD + "\n", encoding="utf-8")
     monkeypatch.setattr(app_main, "password_path", lambda: pw)
-    db.DB_PATH = tmp_path / "test.sqlite3"
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.sqlite3")
     with TestClient(app) as c:
         r = c.post("/login", data={"password": TEST_PASSWORD}, follow_redirects=False)
         c.cookies.set("sdf_session", r.cookies.get("sdf_session"))
@@ -25,97 +25,111 @@ def client(tmp_path, monkeypatch):
 
 # ---------- 共享辅助 ----------
 
-def _ids(client):
+def _q(sql, params=()):
     conn = sqlite3.connect(db.DB_PATH)
-    meters = dict(conn.execute("select name, id from meters"))
-    households = dict(conn.execute("select name, id from households"))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(sql, params).fetchall()
     conn.close()
-    return meters, households
+    return rows
 
 
-def _mid(client, name):
-    return _ids(client)[0][name]
+def _one(sql, params=()):
+    rows = _q(sql, params)
+    return rows[0] if rows else None
 
 
-def _setup(client, houses="房东*\n租户A\n租户B", meters=None, bases=None):
-    """通过真实页面接口建数据(绑定只在新增租户时发生)。
+def _mid(name):
+    row = _one("select id from meters where name=?", (name,))
+    return row["id"] if row else None
 
-    houses: 每行一户,行尾 * 忽略。
-    meters: 每行 `名称,水/电,总/分,所属总表,租户名`。
-    bases:  每行 `表名,日期,读数,部门单价,租户单价`。
-    """
-    if meters is None:
-        meters = "总水,水,总,,房东\n分水A,水,分,总水,租户A\n分水B,水,分,总水,租户B"
-    if bases is None:
-        bases = "总水,2025-01-01,1000,5,10\n分水A,2025-01-01,100,5,10\n分水B,2025-01-01,200,5,10"
 
-    base_map = {}
-    for line in bases.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) >= 3:
-            base_map[parts[0]] = parts
+def _hid(name):
+    row = _one("select id from households where name=?", (name,))
+    return row["id"] if row else None
 
-    # 先建表(基数在建表时录入;归属只在新增租户时发生)
-    for line in meters.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 3:
-            continue
-        b = base_map.get(parts[0], [None, "2025-01-01", "0"])
-        payload = {"name": parts[0],
-                   "meter_type": "water" if parts[1] in ("水", "water") else "electricity",
-                   "level": "main" if parts[2] in ("总", "main") else "sub",
-                   "base_date": b[1], "base_value": b[2]}
-        if len(parts) > 3 and parts[3]:
-            payload["main_meter_id"] = str(_mid(client, parts[3]))
-        client.post("/meters/add", data=payload)
 
-    # 解析每户的表与基数
-    house_meters: dict[str, list[str]] = {}
-    unbound = []
-    for line in meters.strip().splitlines():
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 3:
-            continue
-        name, kind, level = parts[0], parts[1], parts[2]
-        hh = parts[4] if len(parts) > 4 else ""
-        if hh:
-            house_meters.setdefault(hh, []).append(name)
+def _add_meter(client, name, kind="water", level="sub", main=None, base="0",
+               base_date="2025-01-01", phase="single", **kw):
+    """建表。分表必须给装表读数。"""
+    data = {"name": name, "meter_type": kind, "level": level,
+            "base_date": base_date, "phase": phase, **kw}
+    if level == "sub":
+        if phase == "three":
+            parts = base.split("/")
+            data.update({"base_1": parts[0], "base_2": parts[1], "base_3": parts[2]})
         else:
-            unbound.append(name)
-
-    # 逐户新增租户并绑定其表(交接读数即基数,单价随交接录入)
-    for line in houses.strip().splitlines():
-        hh_name = line.strip().rstrip("*").strip()
-        if not hh_name:
-            continue
-        data = {"name": hh_name, "note": "", "start_date": "2025-01-01"}
-        for mname in house_meters.get(hh_name, []):
-            mid = _mid(client, mname)
-            b = base_map.get(mname, [None, "2025-01-01", "0", "", "0"])
-            data["meter_ids"] = data.get("meter_ids", []) + [str(mid)]
-            data[f"base_{mid}"] = b[2]
-            data[f"price_{mid}"] = b[4] if len(b) > 4 else ""
-        client.post("/households/add", data=data)
-
-    # 未绑定表的基数走 /meters/base(基数接口保留为 API)
-    for mname in unbound:
-        b = base_map.get(mname)
-        if b:
-            client.post("/meters/base", data={
-                "meter_id": _mid(client, mname), "reading_date": b[1],
-                "value": b[2], "tenant_price": b[4] if len(b) > 4 else ""})
+            data["base_value"] = base
+    if main:
+        data["main_meter_id"] = str(_mid(main))
+    return client.post("/meters/add", data=data, follow_redirects=False)
 
 
-def _add(client, meter, date, value, **kw):
-    # 单价传空串 = 沿用上次单价(传 "0" 会被当作真实的 0 元单价)
-    data = {"meter_id": str(meter), "reading_date": date, "value": str(value),
-            "department_price": "", "tenant_price": ""}
-    data.update(kw)
+def _move_in(client, name, seats, start="2025-01-01", note=""):
+    """入住。seats: [(表名, 读数[, 单价])]"""
+    data = {"name": name, "note": note, "start_date": start}
+    for seat in seats:
+        mname, value = seat[0], seat[1]
+        price = seat[2] if len(seat) > 2 else ""
+        mid = _mid(mname)
+        data["meter_ids"] = data.get("meter_ids", []) + [str(mid)]
+        if isinstance(value, tuple):
+            for i, v in enumerate(value, 1):
+                data[f"base_{mid}_{i}"] = str(v)
+        else:
+            data[f"base_{mid}"] = str(value)
+        if price != "":
+            data[f"price_{mid}"] = str(price)
+    return client.post("/households/add", data=data, follow_redirects=False)
+
+
+def _line_of(meter_name):
+    row = _one("select id from lines where id = (select line_id from meters where name=?)",
+               (meter_name,))
+    return row["id"] if row else None
+
+
+def _add(client, meter_name, date, value, price=None):
+    line_id = _line_of(meter_name)
+    data = {"line_id": str(line_id), "meter_id": str(_mid(meter_name)),
+            "reading_date": date}
+    if isinstance(value, tuple):
+        for i, v in enumerate(value, 1):
+            data[f"value_{i}"] = str(v)
+    else:
+        data["value"] = str(value)
+    if price is not None:
+        data["tenant_price"] = str(price)
     return client.post("/readings/add", data=data, follow_redirects=False)
 
 
-def _table_rows(html: str) -> str:
-    """结果表格(去掉筛选下拉选项里的干扰文本)。"""
-    start = html.find("<table>")
-    end = html.find("</table>", start)
-    return html[start:end]
+def _msg(resp):
+    from urllib.parse import unquote
+    return unquote(resp.headers.get("location", ""))
+
+
+def _checkout(client, name, outs, date="2025-06-01"):
+    hid = _hid(name)
+    data = {"id": str(hid), "move_out_date": date}
+    for meter_name, value in outs.items():
+        lid = _one("select id from lines where household_id=? and move_out_date is null "
+                   "and id=(select line_id from meters where name=?)", (hid, meter_name))
+        if isinstance(value, tuple):
+            for i, v in enumerate(value, 1):
+                data[f"out_{lid['id']}_{i}"] = str(v)
+        elif lid:
+            data[f"out_{lid['id']}"] = str(value)
+    return client.post("/households/checkout", data=data, follow_redirects=False)
+
+
+def _basic(client):
+    """最小场景:一块总水表 + 一块分水表,甲入住 100。"""
+    _add_meter(client, "总水", level="main")
+    _add_meter(client, "分水A", base="100")
+    _move_in(client, "甲", [("分水A", 100, 10)])
+
+
+def _with_period(client):
+    """甲 100 → 130,30 吨 × 10 = 300 应收。"""
+    _basic(client)
+    _add(client, "分水A", "2025-02-01", 130)
+    return _one("select * from receivables order by id desc limit 1")

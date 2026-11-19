@@ -2,17 +2,17 @@
 {% block body %}
 <section class="card">
   <h2>租户名单</h2>
-  <p class="hint">租户是收水电费的对象。每户可以挂一块或多块分表。</p>
+  <p class="hint">租户是收水电费的对象。一户可以挂多条计量线(多块水表 / 多块电表)。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>租户名称</th><th>分表</th><th>应收</th><th>实收</th><th>欠款</th><th>备注</th><th>操作</th></tr></thead>
+      <thead><tr><th>租户名称</th><th>在用计量线</th><th>分表</th><th>应收</th><th>已收</th><th>欠款</th><th>预收余额</th><th>操作</th></tr></thead>
       <tbody>
         {% if not rows %}
-        <tr><td colspan="7" class="empty">还没有租户,用下方表单添加。</td></tr>
+        <tr><td colspan="8" class="empty">还没有租户,用下方表单办理入住。</td></tr>
         {% endif %}
         {% for x in rows %}
         {% if editing and editing.id == x.id %}
-        <tr class="editrow"><td colspan="7">
+        <tr class="editrow"><td colspan="8">
           <form method="post" action="/households/edit">
             <input type="hidden" name="id" value="{{ x.id }}">
             <div class="formgrid">
@@ -25,25 +25,25 @@
           </form>
         </td></tr>
         {% else %}
+        {% set led = ledgers.get(x.id) %}
         <tr>
           <td>{{ x.name }}</td>
-          <td>{% if meter_counts.get(x.id) %}<span class="tag accent">{{ meter_counts[x.id] }} 块分表</span>{% else %}<span class="tag muted">无分表</span>{% endif %}</td>
-          {% set led = ledgers.get(x.id) %}
-          <td class="num">{{ money(led.due) if led else '0.00' }}</td>
-          <td class="num">{{ money(led.received) if led else '0.00' }}</td>
+          <td>{% if line_counts.get(x.id) %}<span class="tag accent">{{ line_counts[x.id] }} 条</span>{% else %}<span class="tag muted">无</span>{% endif %}</td>
+          <td>{% if meter_counts.get(x.id) %}{{ meter_counts[x.id] }} 块{% else %}—{% endif %}</td>
+          <td class="num">{{ money(led.total_due) if led else '0.00' }}</td>
+          <td class="num">{{ money(led.total_paid) if led else '0.00' }}</td>
           <td class="num">
             {% if led and led.outstanding > 0.005 %}<span class="tag warn">{{ money(led.outstanding) }}</span>
             {% else %}<span class="tag ok">0.00</span>{% endif %}
           </td>
-          <td class="wrap">{{ x.note or '—' }}</td>
+          <td class="num">{{ money(led.balance) if led else '0.00' }}</td>
           <td>
             <div class="rowactions">
               <a class="btn ghost small" href="/households/{{ x.id }}/ledger">台账</a>
               <a class="btn ghost small" href="/households?edit={{ x.id }}">修改</a>
-              <form method="post" action="/households/delete" onsubmit="return confirm('删除租户 {{ x.name }}?其名下分表将解绑,历史读数保留。')">
-                <input type="hidden" name="id" value="{{ x.id }}">
-                <button class="danger small" type="submit">删除</button>
-              </form>
+              {% if line_counts.get(x.id) %}
+              <a class="btn ghost small" href="/households/{{ x.id }}/ledger#checkout">退租</a>
+              {% endif %}
             </div>
           </td>
         </tr>
@@ -55,80 +55,57 @@
 </section>
 
 <section class="card">
-  <h2>新增租户</h2>
-  <p class="hint">
-    勾选该租户使用的表并填写交接起始读数 —— 它是本租户计费的起点。
-    勾选已被其他租户持有的表,会把表转给新租户;上一任的账单历史仍保留。交接起始读数一经设置不可修改。
-  </p>
+  <h2>办理入住</h2>
+  <p class="hint">只能从「已装好且当前空着」的表里挑。同一路水电可以选多块表(甲有两块水表就选两块)。新建表请到「表管理」。</p>
+  {% if not meters %}
+  <p class="empty">还没有可用分表。先到「<a href="/meters">表管理</a>」添加。</p>
+  {% else %}
   <form method="post" action="/households/add">
     <div class="formgrid">
       <div class="field"><label for="hh-new-name">租户名称</label>
-        <input id="hh-new-name" name="name" required placeholder="例如:张三 / 3栋201"></div>
+        <input id="hh-new-name" name="name" placeholder="如 101 / 张三" required></div>
+      <div class="field"><label for="hh-new-date">入住日期</label>
+        <input id="hh-new-date" type="date" name="start_date" value="{{ today }}" required></div>
       <div class="field"><label for="hh-new-note">备注</label>
         <input id="hh-new-note" name="note" placeholder="选填"></div>
-      <div class="field"><label for="hh-start">入住日期</label>
-        <input id="hh-start" type="date" name="start_date" value="{{ today }}" required></div>
     </div>
-    <p class="card-section-title" style="margin-top:14px">使用的表与交接起始读数</p>
-    <div class="tablewrap">
-      <table id="bindtable">
-        <thead><tr><th style="width:34px">选用</th><th>表</th><th>类型</th><th>当前持有人</th><th>最近读数</th><th>交接起始读数</th></tr></thead>
-        <tbody>
-          {% if not meters %}
-        <tr><td colspan="6" class="empty">
-          还没有表,无法绑定。<a href="/meters">先去「表设置」新增表</a>,回来这里勾选并填写交接基数。
-        </td></tr>
-        {% endif %}
+    <div class="card-section">
+      <p class="card-section-title">这块住哪几块表</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th style="width:48px">选用</th><th>表</th><th>类型</th><th>当前持有人</th><th>最近读数</th><th>入住读数</th><th>单价</th><th>线名</th></tr></thead>
+          <tbody>
           {% for m in meters %}
-          <tr>
-            <td><input type="checkbox" class="bind-check" name="meter_ids" value="{{ m.id }}"
-                       data-name="{{ m.name }}" style="width:auto" aria-label="选用 {{ m.name }}"></td>
-            <td>{{ m.name }}</td>
-            <td>{{ type_name(m.meter_type) }}{{ level_name(m.level) }}{% if m.phase == 'three' %} · 三相{% endif %}</td>
-            <td>{{ m.holder or '—' }}</td>
-            <td class="num">{{ '{:,}'.format(m.last_value) if m.last_value is not none else '—' }}</td>
-            {% if m.phase == 'three' %}
-            <td><div class="phase3 bind3">
-              <input type="number" name="base_{{ m.id }}_1" placeholder="A相" aria-label="{{ m.name }} A相交接读数" disabled>
-              <input type="number" name="base_{{ m.id }}_2" placeholder="B相" aria-label="{{ m.name }} B相交接读数" disabled>
-              <input type="number" name="base_{{ m.id }}_3" placeholder="C相" aria-label="{{ m.name }} C相交接读数" disabled>
-            </div></td>
-            {% else %}
-            <td><input class="bind-base" type="number" name="base_{{ m.id }}" placeholder="勾选后填写"
-                       aria-label="{{ m.name }} 交接起始读数" disabled></td>
-            {% endif %}
-          </tr>
+            {% if m.line_id %}<tr><td colspan="8" class="empty">{{ m.name }} 正在被 {{ m.holder }} 使用,退租后才可选。</td></tr>{% endif %}
           {% endfor %}
-        </tbody>
-      </table>
+          {% for m in meters if not m.line_id %}
+            <tr>
+              <td><input type="checkbox" name="meter_ids" value="{{ m.id }}" id="pick-{{ m.id }}" aria-label="选用 {{ m.name }}"></td>
+              <td>{{ m.name }}</td>
+              <td>{{ type_name(m.meter_type) }}</td>
+              <td>—</td>
+              <td class="num">{{ '{:,}'.format(m.last_value) if m.last_value is not none else '—' }}</td>
+              <td>
+                {% if m.phase == 'three' %}
+                <div class="phase3">
+                  <input type="number" name="base_{{ m.id }}_1" placeholder="A相" aria-label="{{ m.name }} A 相">
+                  <input type="number" name="base_{{ m.id }}_2" placeholder="B相" aria-label="{{ m.name }} B 相">
+                  <input type="number" name="base_{{ m.id }}_3" placeholder="C相" aria-label="{{ m.name }} C 相">
+                </div>
+                {% else %}
+                <input type="number" name="base_{{ m.id }}" placeholder="表上的读数" aria-label="{{ m.name }} 入住读数">
+                {% endif %}
+              </td>
+              <td><input type="number" step="0.0001" name="price_{{ m.id }}" placeholder="留空=沿用上次" aria-label="{{ m.name }} 单价"></td>
+              <td><input name="label_{{ m.id }}" placeholder="如 1 号房" aria-label="{{ m.name }} 线名"></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
-    <div class="actions"><button type="submit">新增租户</button></div>
+    <div class="actions"><button type="submit">确认入住</button></div>
   </form>
-  <script>
-  (function(){
-    var rows=document.querySelectorAll('#bindtable tbody tr');
-    rows.forEach(function(tr){
-      var chk=tr.querySelector('.bind-check');
-      if(!chk) return;
-      var inputs=tr.querySelectorAll('.bind-base, .bind3 input');
-      chk.addEventListener('change',function(){
-        inputs.forEach(function(inp){
-          inp.disabled=!chk.checked;
-          inp.required=chk.checked;
-        });
-      });
-    });
-    document.querySelector('form[action="/households/add"]').addEventListener('submit',function(e){
-      var checked=document.querySelectorAll('.bind-check:checked');
-      var missing=false;
-      checked.forEach(function(chk){
-        chk.closest('tr').querySelectorAll('.bind-base, .bind3 input').forEach(function(inp){
-          if(!inp.value){ missing=true; inp.focus(); }
-        });
-      });
-      if(missing){ e.preventDefault(); alert('勾选的表都要填写交接起始读数'); }
-    });
-  })();
-  </script>
+  {% endif %}
 </section>
 {% endblock %}

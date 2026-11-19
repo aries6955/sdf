@@ -17,12 +17,14 @@ NAV = [
                   ("payments", "/payments", "缴费", "¥")]),
     ("查询", [("statistics", "/statistics", "统计与查询", "▤")]),
     ("系统", [("households", "/households", "租户", "☰"),
-              ("meters", "/meters", "表设置", "▣"),
+              ("meters", "/meters", "表管理", "▣"),
               ("init", "/init", "设置", "⚙")]),
 ]
 
 TYPE_NAMES = {"water": "水", "electricity": "电"}
 LEVEL_NAMES = {"main": "总表", "sub": "分表"}
+KIND_NAMES = {"move_in": "入住", "periodic": "抄表", "move_out": "退租",
+              "switch_out": "旧表终读数", "switch_base": "新表基数"}
 
 _env = Environment(
     loader=FileSystemLoader(TEMPLATES),
@@ -34,6 +36,7 @@ _env.globals.update(
     nav_map={label: items for label, items in NAV},
     type_name=lambda k: TYPE_NAMES.get(k, ""),
     level_name=lambda k: LEVEL_NAMES.get(k, ""),
+    kind_name=lambda k: KIND_NAMES.get(k, ""),
     money=lambda v: f"{(v or 0):,.2f}",
 )
 

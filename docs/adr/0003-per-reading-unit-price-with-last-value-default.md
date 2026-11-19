@@ -1,5 +1,5 @@
 ---
-status: partially superseded by ADR-0009 (部门单价部分)
+status: partially superseded by ADR-0013 (部门单价部分); 租户单价部分继续有效
 ---
 
 # 单价在抄表时录入,默认带入上次单价

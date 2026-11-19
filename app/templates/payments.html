@@ -2,76 +2,54 @@
 {% block body %}
 <section class="card">
   <h2>新增缴费</h2>
-  <p class="hint">填写本次表上的读数与部门单价,金额由「(本次读数 − 上次读数)× 单价」自动算出。</p>
-  <form method="post" action="/payments/add" id="payform">
+  <p class="hint">照水务、电力出具的账单录入:日期、总表、读数、单价、金额。系统不推算金额,也不与租户单价比较 —— 赚差价是常态。</p>
+  {% if not meters %}
+  <p class="empty">还没有总表。先到「<a href="/meters">表管理</a>」添加一块总表。</p>
+  {% else %}
+  <form method="post" action="/payments/add">
     <div class="formgrid">
-      <div class="field"><label for="pay-meter">总表</label>
-        <select id="pay-meter" name="meter_id" required>
-          {% for m in meters %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
-        </select><span class="assist">只对总表缴费</span></div>
-      <div class="field"><label for="pay-date">缴费日期</label>
-        <input id="pay-date" type="date" name="payment_date" value="{{ today }}" required></div>
-      <div class="field"><label for="last-reading">上次读数</label>
-        <input id="last-reading" disabled placeholder="自动读取"><span class="assist">该总表最近一次缴费读数</span></div>
-      <div class="field"><label for="cur-reading">本次读数</label>
-        <input id="cur-reading" type="number" name="reading_value" required placeholder="表上显示的数字"></div>
-      <div class="field"><label for="unit-price">部门单价</label>
-        <input id="unit-price" type="number" step="0.0001" name="unit_price" required placeholder="本期的单价">
-        <span class="assist">部门向房东收取的单价</span></div>
-      <div class="field"><label for="pay-amount">金额(元)</label>
-        <input id="pay-amount" type="number" step="0.01" name="amount" readonly placeholder="自动计算">
-        <span class="assist">自动计算,可手动修正</span></div>
-      <div class="field"><label for="period-start">账期起</label>
-        <input id="period-start" type="date" name="period_start" value="{{ today }}" required></div>
-      <div class="field"><label for="period-end">账期止</label>
-        <input id="period-end" type="date" name="period_end" value="{{ period_end_default }}" required></div>
-      <div class="field"><label for="pay-note">备注</label>
-        <input id="pay-note" name="note" placeholder="选填,如缴费单号"></div>
+      <div class="field"><label for="p-meter">总表</label>
+        <select id="p-meter" name="meter_id" required>
+          {% for m in meters %}<option value="{{ m.id }}">{{ m.name }} · {{ type_name(m.meter_type) }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label for="p-date">缴费日期</label>
+        <input id="p-date" type="date" name="payment_date" value="{{ today }}" required></div>
+      <div class="field"><label for="p-reading">账单读数</label>
+        <input id="p-reading" type="number" name="reading_value" placeholder="账单上的读数,选填"></div>
+      <div class="field"><label for="p-price">账单单价</label>
+        <input id="p-price" type="number" step="0.0001" name="unit_price" placeholder="账单上的单价,选填"></div>
+      <div class="field"><label for="p-amount">缴费金额</label>
+        <input id="p-amount" type="number" step="0.01" name="amount" placeholder="账单上要交的钱" required></div>
+      <div class="field"><label for="p-note">备注</label><input id="p-note" name="note" placeholder="选填"></div>
     </div>
     <div class="actions"><button type="submit">保存缴费</button></div>
   </form>
-  <script>
-  (function(){
-    var last={{ last_js | safe }};
-    var m=document.getElementById('pay-meter'), lr=document.getElementById('last-reading'),
-        cr=document.getElementById('cur-reading'), up=document.getElementById('unit-price'),
-        am=document.getElementById('pay-amount');
-    function refreshLast(){
-      var v=last[m.value];
-      lr.value=(v===undefined?'':'当前表 '+v);
-      lr.dataset.last=(v===undefined?'':v);
-      calc();
-    }
-    function calc(){
-      var l=parseFloat(lr.dataset.last), c=parseFloat(cr.value), u=parseFloat(up.value);
-      if(!isNaN(l)&&!isNaN(c)&&!isNaN(u)&&c>=l){ am.value=(Math.round((c-l)*u*100)/100).toFixed(2); }
-      else if(!isNaN(c)&&!isNaN(u)){ am.value=''; }
-    }
-    m.addEventListener('change',refreshLast);
-    cr.addEventListener('input',calc);
-    up.addEventListener('input',calc);
-    refreshLast();
-  })();
-  </script>
+  {% endif %}
 </section>
 
+{% if per_meter %}
 <section class="card">
-  <h2>缴费记录(共 {{ agg.n }} 条·第 {{ page }}/{{ pages }} 页)</h2>
-  <p class="hint">这里只记录房东向供水/供电部门缴了多少钱,不影响租户账单。</p>
-
-  <div class="card-section">
-    <p class="card-section-title">合计(基于筛选后的全部记录,不只看当前页)</p>
-    <div class="stats compact">
-      <div class="stat"><div class="k">命中记录</div><div class="v">{{ agg.n }}<span class="u"> 条</span></div></div>
-      <div class="stat"><div class="k">筛选金额合计</div><div class="v">{{ money(agg.s) }}<span class="u"> 元</span></div></div>
-      {% for stat in per_meter_stats %}
-      <div class="stat"><div class="k">{{ stat.name }} 累计已缴</div><div class="v">{{ money(stat.total) }}<span class="u"> 元</span></div></div>
+  <h2>各总表累计缴费</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>总表</th><th>类型</th><th>累计缴费(元)</th></tr></thead>
+      <tbody>
+      {% for x in per_meter %}
+        <tr><td>{{ x.name }}</td><td>{{ type_name(x.meter_type) }}</td><td class="num">{{ money(x.total) }}</td></tr>
       {% endfor %}
-    </div>
+      </tbody>
+    </table>
   </div>
+</section>
+{% endif %}
 
+<section class="card">
+  <h2>缴费记录 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
+  <div class="stats compact">
+    <div class="stat"><div class="k">命中记录</div><div class="v">{{ agg.n }}<span class="u"> 条</span></div></div>
+    <div class="stat"><div class="k">金额合计</div><div class="v">{{ money(agg.s) }}<span class="u"> 元</span></div></div>
+  </div>
   <div class="card-section">
-    <p class="card-section-title">筛选</p>
     <form method="get" action="/payments">
       <div class="formgrid">
         <div class="field"><label for="f-meter">总表</label>
@@ -84,30 +62,27 @@
       <div class="actions"><button type="submit">筛选</button><a class="btn ghost" href="/payments">清除条件</a></div>
     </form>
   </div>
-
-  <div class="card-section">
-    <div class="tablewrap">
-      <table>
-        <thead><tr><th>总表</th><th>缴费日期</th><th>本次读数</th><th>单价</th><th>金额(元)</th><th>对应账期</th><th>备注</th><th>操作</th></tr></thead>
-        <tbody>
-          {% if not rows %}<tr><td colspan="8" class="empty">还没有缴费记录。</td></tr>{% endif %}
-          {% for x in rows %}
-          <tr>
-            <td>{{ x.meter_name }}</td><td>{{ x.payment_date }}</td>
-            <td class="num">{{ x.reading_value if x.reading_value is not none else '—' }}</td>
-            <td class="num">{{ x.unit_price }}</td>
-            <td class="num">{{ money(x.amount) }}</td>
-            <td>{{ x.period_start }} ~ {{ x.period_end }}</td>
-            <td class="wrap">{{ x.note or '—' }}</td>
-            <td><form method="post" action="/payments/delete" onsubmit="return confirm('删除这条缴费记录?')">
-              <input type="hidden" name="id" value="{{ x.id }}"><button class="danger small" type="submit">删除</button>
-            </form></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {{ pager | safe }}
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>缴费日期</th><th>总表</th><th>类型</th><th>账单读数</th><th>账单单价</th><th>金额(元)</th><th>备注</th><th>操作</th></tr></thead>
+      <tbody>
+        {% if not rows %}<tr><td colspan="8" class="empty">没有符合条件的缴费记录。</td></tr>{% endif %}
+        {% for x in rows %}
+        <tr>
+          <td>{{ x.payment_date }}</td>
+          <td>{{ x.meter_name }}</td>
+          <td>{{ type_name(x.meter_type) }}</td>
+          <td class="num">{{ '{:,}'.format(x.reading_value) if x.reading_value is not none else '—' }}</td>
+          <td class="num">{{ x.unit_price if x.unit_price is not none else '—' }}</td>
+          <td class="num">{{ money(x.amount) }}</td>
+          <td class="wrap">{{ x.note or '—' }}</td>
+          <td><form method="post" action="/payments/delete" onsubmit="return confirm('删除这条缴费记录?')">
+            <input type="hidden" name="id" value="{{ x.id }}"><button class="danger small" type="submit">删除</button></form></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
+  {{ pager | safe }}
 </section>
 {% endblock %}

@@ -1,473 +1,199 @@
-import re
-import sqlite3
-from pathlib import Path
+"""页面、鉴权、示例数据与导出。"""
 
-import pytest
-from fastapi.testclient import TestClient
+import sqlite3
 
 import app.db as db
-import app.main as app_main
-from app.db import connect
-from app.main import SUPER_PASSWORD, app
-from tests.conftest import (TEST_PASSWORD, _add, _ids, _setup, _table_rows)
+from tests.conftest import (_add, _add_meter, _basic, _hid, _mid, _move_in, _one, _q,
+                            _with_period)
 
 
 def test_requires_login():
+    """未登录访问任何页面都跳登录页。"""
+    from fastapi.testclient import TestClient
+    from app.main import app
     with TestClient(app) as c:
-        r = c.get("/households", follow_redirects=False)
-        assert r.headers["location"] == "/login"
+        for path in ("/", "/readings", "/households", "/meters", "/payments",
+                     "/statistics", "/init"):
+            r = c.get(path, follow_redirects=False)
+            assert r.status_code == 303 and r.headers["location"] == "/login", path
 
 
-def test_all_pages_return_html_not_json(client):
-    """每个页面路由必须声明 HTMLResponse,否则 str 会被序列化成 JSON 显示为源码。"""
-    for path in ["/", "/households", "/meters", "/readings", "/switches",
-                 "/payments", "/adjustments", "/statistics", "/init"]:
+def test_all_mutations_require_login():
+    """提交动作也要登录:未登录的 POST 不能改动任何数据。"""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    import app.db as _db
+    with TestClient(app) as c:
+        for path in ("/init/clear", "/households/add", "/meters/add", "/readings/add",
+                     "/receipts/add", "/payments/add", "/switches/add"):
+            r = c.post(path, data={}, follow_redirects=False)
+            assert r.status_code == 303 and r.headers["location"] == "/login", path
+
+
+def test_all_pages_render(client):
+    _with_period(client)
+    for path in ("/", "/readings", "/households", "/meters", "/payments", "/statistics",
+                 "/init", "/statistics/pdf"):
         r = client.get(path)
         assert r.status_code == 200, path
-        assert r.headers["content-type"].startswith("text/html"), (path, r.headers["content-type"])
-        assert "<!doctype html>" in r.text, path
 
 
-def test_bad_password_rejected(client):
-    r = client.post("/login", data={"password": "wrong"}, follow_redirects=False)
-    assert r.headers["location"].startswith("/login")
+def test_reading_page_lists_lines_sorted_by_staleness(client):
+    """最久没抄的排最前。"""
+    _add_meter(client, "分水A", base="100")
+    _add_meter(client, "分水B", base="100")
+    _move_in(client, "甲", [("分水A", 100, 10)], start="2025-01-01")
+    _move_in(client, "乙", [("分水B", 100, 10)], start="2025-03-01")
+    html = client.get("/readings").text
+    # 甲上次 2025-01-01,乙 2025-03-01;甲的 select option 应更靠前
+    assert html.find("甲") < html.find("乙")
 
 
-def test_main_meter_never_charged_to_household(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    for name, value in [("总水", 1100), ("分水A", 130), ("分水B", 260)]:
-        _add(client, meters[name], "2025-02-01", value)
-    rows = _table_rows(client.get("/statistics").text)
-    # 总表不产生任何租户账单行(既无整笔计费,也无差额行)
-    assert "差额" not in rows
-    assert "总水" not in rows
-    # 只有两个分表各自计费:30×10 与 60×10
-    assert rows.count("</tr>") - 1 == 2  # 扣除表头行
-    assert "300.0" in rows and "600.0" in rows
-
-
-def test_price_carried_from_previous_reading(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["分水A"], "2025-02-01", 130)
-    conn = sqlite3.connect(db.DB_PATH)
-    dp, tp = conn.execute(
-        "select department_price, tenant_price from readings where meter_id=? and is_initial=0",
-        (meters["分水A"],),
-    ).fetchone()
-    conn.close()
-    # 部门单价已移到缴费时录入(ADR-0009),抄表只继承租户单价
-    assert tp == 10
-
-
-def test_reading_must_increase(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    assert "msg=" in _add(client, meters["分水A"], "2025-02-01", 90).headers["location"]
-    assert "msg=" in _add(client, meters["分水A"], "2024-12-01", 120).headers["location"]
-    assert "msg=" not in (_add(client, meters["分水A"], "2025-02-01", 130).headers.get("location") or "")
-
-
-def test_base_cannot_be_reset_after_readings(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["分水A"], "2025-02-01", 130)
-    r = _add(client, meters["分水A"], "2025-03-01", 5, is_initial="1")
-    assert "msg=" in r.headers["location"]
-
-
-def test_clear_works_with_dependent_data(client):
-    """有缴费/抄表等依赖数据时,清空也能正常完成(外键顺序正确)。"""
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["总水"], "2025-02-01", 1100)
-    client.post("/payments/add", data={"meter_id": str(meters["总水"]),
-                                       "payment_date": "2025-02-05", "amount": "500",
-                                       "period_start": "2025-01-01", "period_end": "2025-02-01"})
-    assert client.post("/init/clear").status_code == 200
-    conn = sqlite3.connect(db.DB_PATH)
-    for table in ["households", "meters", "readings", "payments", "adjustments", "settings"]:
-        assert conn.execute(f"select count(*) from {table}").fetchone()[0] == 0, table
-    conn.close()
-
-
-def test_billed_period_is_locked(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["分水A"], "2025-02-01", 130)
-    conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute(
-        "select id from readings where meter_id=? and is_initial=0 and value=130",
-        (meters["分水A"],)).fetchone()[0]
-    conn.close()
-    client.post("/readings/bill", data={"id": str(rid)})
-    client.post("/readings/edit", data={"id": str(rid), "value": "9999"})
-    client.post("/readings/delete", data={"id": str(rid)})
-    conn = sqlite3.connect(db.DB_PATH)
-    value = conn.execute("select value from readings where id=?", (rid,)).fetchone()[0]
-    conn.close()
-    assert value == 130
-
-
-def test_payment_does_not_lock_period(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["分水A"], "2025-02-01", 130)
-    conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute(
-        "select id from readings where meter_id=? and is_initial=0 and value=130",
-        (meters["分水A"],)).fetchone()[0]
-    conn.close()
-    client.post("/payments/add", data={"meter_id": str(meters["总水"]),
-                                       "payment_date": "2025-02-05", "amount": "500",
-                                       "period_start": "2025-01-01", "period_end": "2025-02-01"})
-    client.post("/readings/edit", data={"id": str(rid), "value": "140"})
-    conn = sqlite3.connect(db.DB_PATH)
-    value = conn.execute("select value from readings where id=?", (rid,)).fetchone()[0]
-    conn.close()
-    assert value == 140
-
-
-def test_switch_keeps_usage_and_prices(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["分水A"], "2025-02-01", 130)
-    client.post("/meters/add", data={"name": "分水A新", "meter_type": "water", "level": "sub",
-                                    "main_meter_id": str(meters["总水"]),
-                                    "base_date": "2025-01-01", "base_value": "0"})
-    conn = sqlite3.connect(db.DB_PATH)
-    new_id = conn.execute("select id from meters where name='分水A新'").fetchone()[0]
-    conn.close()
-    client.post("/switches/add", data={"old_meter_id": str(meters["分水A"]), "new_meter_id": str(new_id),
-                                       "switch_date": "2025-03-01", "old_final_value": "150",
-                                       "new_base_value": "0"})
-    _add(client, new_id, "2025-04-01", 60)
-    # 旧表 130->150 与 新表 0->60 都应计入,且单价沿用 10
-    rows = _table_rows(client.get("/statistics?date_from=2025-03-01").text)
-    assert "分水A新" in rows
-    # 新表的账期行单价应为沿用的 10.0(而非 0),金额 60×10=600
-    new_row = next(r for r in rows.split("<tr>") if "分水A新" in r)
-    assert "<td class=\"num\">10.0</td>" in new_row
-    assert "600.00" in new_row
-    # 旧表历史用量仍要能被查到,不能被换表丢掉
-    assert "分水A" in client.get("/statistics").text
-
-
-def test_switch_rejects_same_meter(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    before = sqlite3.connect(db.DB_PATH).execute("select count(*) from readings").fetchone()[0]
-    client.post("/switches/add", data={"old_meter_id": str(meters["分水A"]),
-                                       "new_meter_id": str(meters["分水A"]),
-                                       "switch_date": "2025-03-01", "old_final_value": "150",
-                                       "new_base_value": "0"})
-    after = sqlite3.connect(db.DB_PATH).execute("select count(*) from readings").fetchone()[0]
-    assert before == after
-
-
-def _table_rows(html: str) -> str:
-    """The result table only, excluding filter dropdown options."""
-    start = html.find("<table>")
-    end = html.find("</table>", start)
-    return html[start:end]
-
-
-def test_statistics_filters(client):
-    _setup(client, meters="总水,水,总,,房东\n分水A,水,分,总水,租户A\n分水B,水,分,总水,租户B")
-    meters, households = _ids(client)
-    for name, value in [("总水", 1100), ("分水A", 130), ("分水B", 260)]:
-        _add(client, meters[name], "2025-02-01", value)
-    only_a = _table_rows(client.get(f"/statistics?household_id={households['租户A']}").text)
-    assert "分水A" in only_a and "总水" not in only_a
-    only_b = _table_rows(client.get(f"/statistics?meter_id={meters['分水B']}").text)
-    assert "分水B" in only_b and "分水A" not in only_b
-    later = _table_rows(client.get("/statistics?date_from=2025-03-01").text)
-    assert "分水A" not in later
-    billed_only = _table_rows(client.get("/statistics?billed=1").text)
-    assert "分水A" not in billed_only
-
-
-def test_unbilled_reading_is_editable_inline(client):
-    """需求 9:未出账抄表必须可以在界面上修改。"""
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["分水A"], "2025-02-01", 130)
-    conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute(
-        "select id from readings where meter_id=? and is_initial=0 and reading_date>'2025-01-01'",
-        (meters["分水A"],)).fetchone()[0]
-    conn.close()
-    # 行内编辑表单要能打开
-    page = client.get(f"/readings?edit={rid}").text
-    assert 'action="/readings/edit"' in page
-    # 改读数与单价应生效
-    client.post("/readings/edit", data={"id": str(rid), "value": "145",
-                                        "department_price": "5", "tenant_price": "12"})
-    conn = sqlite3.connect(db.DB_PATH)
-    value, tp = conn.execute("select value, tenant_price from readings where id=?", (rid,)).fetchone()
-    conn.close()
-    assert (value, tp) == (145, 12)
-
-
-def test_edit_rejects_crossing_neighbours(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["分水A"], "2025-02-01", 130)
-    _add(client, meters["分水A"], "2025-03-01", 160)
-    conn = sqlite3.connect(db.DB_PATH)
-    first = conn.execute(
-        "select id from readings where meter_id=? and is_initial=0 and value=130",
-        (meters["分水A"],)).fetchone()[0]
-    conn.close()
-    # 把前一条改成大于后一条,应被拒绝
-    client.post("/readings/edit", data={"id": str(first), "value": "999"})
-    conn = sqlite3.connect(db.DB_PATH)
-    value = conn.execute("select value from readings where id=?", (first,)).fetchone()[0]
-    conn.close()
-    assert value == 130
-
-
-def test_billed_reading_cannot_be_edited(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    _add(client, meters["分水A"], "2025-02-01", 130)
-    conn = sqlite3.connect(db.DB_PATH)
-    rid = conn.execute(
-        "select id from readings where meter_id=? and is_initial=0 and value=130",
-        (meters["分水A"],)).fetchone()[0]
-    conn.close()
-    client.post("/readings/bill", data={"id": str(rid)})
-    client.post("/readings/edit", data={"id": str(rid), "value": "999"})
-    conn = sqlite3.connect(db.DB_PATH)
-    value = conn.execute("select value from readings where id=?", (rid,)).fetchone()[0]
-    conn.close()
-    assert value == 130
-    # 已出账记录不应显示修改入口
-    assert f"/readings?edit={rid}" not in client.get("/readings").text
-
-
-def test_sidebar_layout_present(client):
-    """导航必须在左侧栏,而不是顶部平铺。"""
-    html = client.get("/statistics").text
-    assert '<aside class="sidebar" id="sidebar">' in html
-    assert 'class="shell"' in html
-    assert 'class="topbar"' not in html
-    # 侧栏只保留高频入口;换表与冲正已并入表设置/统计页
-    for href in ["/", "/readings", "/payments",
-                 "/statistics", "/households", "/meters", "/init"]:
-        assert f'href="{href}"' in html, href
-
-
-def test_nav_grouping(client):
-    """租户/表设置/设置收入可折叠的系统面板;日常记账不含低频项。"""
+def test_home_shows_totals(client):
+    _with_period(client)
     html = client.get("/").text
-    sysnav = re.search(r'<nav class="sidegroup sysnav.*?</nav>', html, re.S).group(0)
-    # 收起状态:首页时系统面板不含 open
-    assert 'sysnav open' not in html
-    for href in ["/households", "/meters", "/init"]:
-        assert f'href="{href}"' in sysnav, f"{href} 应在系统面板"
-    assert "表设置" in sysnav
-    assert ">表具<" not in html
-    # 系统面板在侧栏底部(位于退出登录之前)
-    assert html.find('class="sysnav') < html.find('href="/logout"')
-    # 日常记账只剩抄表与缴费
-    plain = re.findall(r'<nav class="sidegroup"[^>]*aria-label="([^"]+)".*?</nav>', html, re.S)
-    daily = re.search(r'aria-label="日常记账".*?</nav>', html, re.S).group(0)
-    assert "/readings" in daily and "/payments" in daily
-    assert "/switches" not in daily and "/adjustments" not in daily
-    # 查询组仍在
-    query = re.search(r'aria-label="查询".*?</nav>', html, re.S).group(0)
-    assert "/statistics" in query
-    # 展开按钮存在且默认 aria-expanded=false
-    assert 'id="sysNavToggle"' in html
-    assert 'aria-expanded="false"' in html
+    assert "300.00" in html
+    assert "应收合计" in html
 
 
-def test_sysnav_auto_expands_on_system_pages(client):
-    """当前页属于系统组时,面板自动展开并高亮。"""
-    html = client.get("/init").text
-    assert 'sysnav open' in html
-    assert 'aria-current="page"' in html
-    assert 'aria-expanded="true"' in html
-
-
-def test_sample_data_billing_is_correct(client):
-    """示例数据的计费逻辑必须可核对。"""
-    client.post("/init/sample")
-    rows = _table_rows(client.get("/statistics").text)
-    # 张三水 1 月: 232-200=32 × 5.0 = 160.00
-    assert "160.00" in rows
-    # 张三水 2 月: 268-232=36 × 5.5 = 198.00(已调价)
-    assert "198.00" in rows
-    # 李四水 2 月: 205-176=29 × 5.5 = 159.50
-    assert "159.50" in rows
-    # 张三电 2 月: 1260-1120=140 × 1.1 = 154.00
-    assert "154.00" in rows
-    # 总表不得出现在租户账单里
-    assert "总水表" not in rows and "总电表" not in rows
-    # 李四没有电表,不应有电费行
-    assert not any("李四" in r and "电" in r for r in rows.split("<tr>"))
-
-
-def test_sample_arithmetic_totals(client):
-    client.post("/init/sample")
+def test_statistics_shows_margin_and_vacancy(client):
+    _basic(client)
+    _add(client, "分水A", "2025-02-01", 130)
+    client.post("/payments/add", data={
+        "meter_id": str(_mid("总水")), "payment_date": "2025-02-05", "amount": "100"})
     html = client.get("/statistics").text
-    stats = dict(re.findall(r'<div class="k">(.*?)</div><div class="v">(.*?)</div>', html))
-    assert "161" in stats["用水量合计"]      # 32+36+26+29+18+20
-    assert "260" in stats["用电量合计"]      # 120+140
-    assert "1,121.50" in stats["账单金额"]   # 各笔之和
-    assert "25.00" in stats["冲正合计"]
-    assert "1,146.50" in stats["应收净额"]
+    assert "向部门缴费" in html and "毛差" in html
+    assert "200.00" in html, "毛差 = 应收 300 - 缴费 100"
+
+
+def test_pdf_export(client):
+    _with_period(client)
+    r = client.get("/statistics/pdf")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/pdf")
+    assert r.content.startswith(b"%PDF")
+
+
+def test_html_pages_are_not_cached(client):
+    r = client.get("/")
+    assert "no-store" in r.headers.get("cache-control", "")
+
+
+# ---------- 示例数据 ----------
+
+def test_sample_data_arithmetic(client):
+    """示例数据应能完整跑通:多线、换表、退租、空档期。"""
+    client.post("/init/sample")
+    rows = _q("select * from receivables order by id")
+    assert len(rows) >= 8, "示例应产生多条账期"
+    assert all(r["amount"] == round(r["usage_amount"] * r["unit_price"], 2) for r in rows)
+    # 换表那条账期跨越两块表
+    multis = [r for r in rows if r["usage_amount"] == 92]     # (280-232)+(32-0)? 见下
+    lines = _q("select * from lines where move_out_date is not null")
+    assert lines, "示例包含退租"
+
+    from app.billing import vacancy_usage
+    conn = db.connect()
+    gaps = vacancy_usage(conn)
+    conn.close()
+    assert gaps and gaps[0]["usage"] == 15, "示例包含 15 吨空档期"
+
+
+def test_sample_switch_keeps_period(client):
+    """示例里张三的 101 水表在 3/1 换表,账期不切断。"""
+    client.post("/init/sample")
+    from app.billing import all_periods
+    conn = db.connect()
+    periods = all_periods(conn, meter_type="water")
+    conn.close()
+    # 换表当月间隔 2/1 与 3/1 的那条账期,用量跨两块表
+    spans = [p for p in periods if p["start"] == "2025-02-01" and p["end"] == "2025-03-01"
+             and p["household_name"] == "张三"]
+    assert spans, "换表后的账期仍应是一条"
+    # 换表日(3/15)不切账期:张三水线的账期是 1/1-2/1、2/1-3/1、3/1-4/1 三段
+    zhang = [p for p in periods if p["household_name"] == "张三"]
+    assert len(zhang) == 3
+    assert [p["end"] for p in zhang] == ["2025-02-01", "2025-03-01", "2025-04-01"]
 
 
 def test_clear_all_data(client):
     client.post("/init/sample")
-    assert sqlite3.connect(db.DB_PATH).execute("select count(*) from households").fetchone()[0] > 0
     client.post("/init/clear")
-    conn = sqlite3.connect(db.DB_PATH)
-    for table in ["households", "meters", "readings", "payments", "adjustments", "settings"]:
-        assert conn.execute(f"select count(*) from {table}").fetchone()[0] == 0, table
-    conn.close()
+    for table in ("households", "meters", "lines", "readings", "receivables",
+                  "receipts", "payments", "meter_switches"):
+        assert _one(f"select count(*) as n from {table}")["n"] == 0, table
 
 
-def test_mojibake_is_detected(client):
-    """写入时就已损坏的数据要在初始化页被指出。"""
-    with connect() as conn:
-        conn.execute("insert into households(name) values (?)", ("\u00e5\u00bc\u00a0\u00e4\u00b8\u0089",))
-    html = client.get("/init").text
-    assert "可能是乱码" in html
-
-
-def test_inline_edit_colspan_matches_header(client):
-    """行内编辑的 colspan 必须等于表头列数,否则右侧会缺一块。"""
+def test_clear_resets_autoincrement(client):
     client.post("/init/sample")
-    conn = sqlite3.connect(db.DB_PATH)
-    meter_id = conn.execute("select id from meters where name='101水表'").fetchone()[0]
-    reading_id = conn.execute(
-        "select id from readings where meter_id=? and is_initial=0 and billed=0",
-        (meter_id,)).fetchone()[0]
-    conn.close()
-
-    for path, marker in [(f"/meters?edit={meter_id}", "/meters/edit"),
-                         (f"/readings?edit={reading_id}", "/readings/edit")]:
-        html = client.get(path).text
-        heads = re.search(r"<thead><tr>(.*?)</tr></thead>", html, re.S).group(1)
-        cols = heads.count("<th")
-        row = re.search(r'<tr class="editrow">.*?<td colspan="(\d+)"', html, re.S)
-        assert row, f"{path} 未找到编辑行"
-        assert int(row.group(1)) == cols, f"{path} colspan={row.group(1)} 但表头 {cols} 列"
-        assert marker in html
+    client.post("/init/clear")
+    _move_in(client, "甲", [])
+    # 空表清单会报错,改为直接建表验 ID 重置
+    client.post("/init/clear")
+    _add_meter(client, "分水A", base="0")
+    assert _one("select id from meters")["id"] == 1
 
 
-def test_edit_fields_align_in_one_row(client):
-    """表具编辑行的 4 个字段必须同处一行(左右位置递增、top 相同)。"""
-    client.post("/init/sample")
-    conn = sqlite3.connect(db.DB_PATH)
-    meter_id = conn.execute("select id from meters where name='101水表'").fetchone()[0]
-    conn.close()
-    html = client.get(f"/meters?edit={meter_id}").text
-    row = re.search(r'<tr class="editrow">.*?</tr>', html, re.S).group(0)
-    assert row.count('class="field"') == 3  # 归属租户已移除
-    # 只允许「所属总表」带说明文字,其余不带
-    assert row.count('class="assist"') == 1
+# ---------- 密码与初始化 ----------
 
-
-def test_only_one_clear_button_in_init(client):
-    """初始化页只能有一个清空数据按钮,避免重复。"""
-    html = client.get("/init").text
-    assert html.count('action="/init/clear"') == 1
-    assert html.count('<button class="danger" type="submit">清空所有数据</button>') == 1
-    assert "清除所有数据" not in html
-
-
-def test_clear_requires_confirmation(client):
-    """清空按钮必须带 confirm 确认框,不能直接提交。"""
-    html = client.get("/init").text
-    block = re.search(r'<form method="post" action="/init/clear"(.*?)</form>', html, re.S).group(1)
-    assert "confirm(" in block
-    assert "无法撤销" in block
-
-
-def test_init_page_has_no_bulk_textareas(client):
-    """批量录入文本框已移除,改用租户/表设置页面与抄表页。"""
-    html = client.get("/init").text
-    for action in ["/init/households", "/init/meters", "/init/bases"]:
-        assert action not in html, action
-    assert html.count("<textarea") == 0
-    # 仍保留示例数据与房产名称
-    assert 'action="/init/sample"' in html
-    assert 'action="/init/property"' in html
+def test_bad_password_rejected(client):
+    from tests.conftest import TEST_PASSWORD
+    from urllib.parse import unquote
+    r = client.post("/login", data={"password": "wrong"}, follow_redirects=False)
+    assert "密码不正确" in unquote(r.headers["location"])
 
 
 def test_change_password(client):
-    """界面改密码:验证旧密码、新密码写入文件。"""
-    pw_file = app_main.password_path()
-    # 旧密码错误应被拒
+    from tests.conftest import TEST_PASSWORD
     client.post("/init/password", data={"old_password": "wrong",
-                                        "new_password": "newpass1",
-                                        "confirm_password": "newpass1"})
-    assert "newpass1" not in pw_file.read_text(encoding="utf-8")
-    # 两次不一致应被拒
+                                        "new_password": "abcd", "confirm_password": "abcd"})
     client.post("/init/password", data={"old_password": TEST_PASSWORD,
-                                        "new_password": "newpass1",
-                                        "confirm_password": "newpass2"})
-    assert "newpass1" not in pw_file.read_text(encoding="utf-8")
-    # 正确修改
-    client.post("/init/password", data={"old_password": TEST_PASSWORD,
-                                        "new_password": "newpass1",
-                                        "confirm_password": "newpass1"})
-    assert pw_file.read_text(encoding="utf-8").strip() == "newpass1"
-
-
-def test_new_password_works_for_login(client):
-    client.post("/init/password", data={"old_password": TEST_PASSWORD,
-                                        "new_password": "changed9",
-                                        "confirm_password": "changed9"})
-    fresh = TestClient(app)
-    r = fresh.post("/login", data={"password": "changed9"}, follow_redirects=False)
-    assert r.headers["location"] == "/"
-
-
-def test_reject_password_equal_to_super(client):
-    pw_file = app_main.password_path()
-    client.post("/init/password", data={"old_password": TEST_PASSWORD,
-                                        "new_password": SUPER_PASSWORD,
-                                        "confirm_password": SUPER_PASSWORD})
-    assert pw_file.read_text(encoding="utf-8").strip() != SUPER_PASSWORD
-
-
-def test_super_password_recovers_access():
-    """忘记密码时,用超级密码能登录并直达改密码页。"""
-    fresh = TestClient(app)
-    r = fresh.post("/login", data={"password": SUPER_PASSWORD}, follow_redirects=False)
+                                        "new_password": "abcd", "confirm_password": "abcd"})
+    r = client.post("/login", data={"password": "abcd"}, follow_redirects=False)
     assert r.status_code == 303
-    assert r.headers["location"].startswith("/init")
-    assert "set-cookie" in {k.lower() for k in r.headers}
 
 
-def test_sidebar_has_collapse_control(client):
+def test_property_name(client):
+    client.post("/init/property", data={"property_name": "测试小区"})
+    assert "测试小区" in client.get("/").text
+
+
+# ---------- 页面结构 ----------
+
+def test_nav_has_no_adjustments_or_switches(client):
     html = client.get("/").text
-    assert 'id="collapseBtn"' in html
-    assert "sdf_sidebar_collapsed" in html
-    assert 'body.collapsed' in client.get("/static/style.css").text
+    assert 'href="/adjustments"' not in html
+    assert 'href="/switches"' not in html
 
 
-def test_html_pages_are_not_cached(client):
-    """页面不得被浏览器缓存,否则改动后仍展示旧界面。"""
-    for path in ["/", "/init", "/readings", "/statistics"]:
-        r = client.get(path)
-        assert r.headers["content-type"].startswith("text/html")
-        cache = r.headers.get("cache-control", "")
-        assert "no-store" in cache, f"{path} 缺少 no-store: {cache!r}"
+def test_meters_page_has_swap_section(client):
+    _basic(client)
+    html = client.get("/meters").text
+    assert "换表" in html
+    assert "不切断账期" in html
 
 
-def test_pdf_export(client):
-    _setup(client)
-    meters, _ = _ids(client)
-    for name, value in [("总水", 1100), ("分水A", 130)]:
-        _add(client, meters[name], "2025-02-01", value)
-    for query in ["type=water", "type=electricity", "type=all", "type=water&billed=1"]:
-        r = client.get("/statistics/pdf?" + query)
-        assert r.status_code == 200
-        assert r.content[:4] == b"%PDF"
+def test_household_page_has_move_in_and_out(client):
+    _with_period(client)
+    html = client.get("/households").text
+    assert "办理入住" in html
+    assert "退租" in client.get(f"/households/{_hid('甲')}/ledger").text
+
+
+def test_no_delete_buttons(client):
+    _with_period(client)
+    html = client.get("/households").text
+    assert "/households/delete" not in html
+    assert "清空" not in client.get("/meters").text
+
+
+def test_closed_line_still_shows_meter_name(client):
+    """退租后表已解绑,但台账与统计仍应显示那条线用的表。"""
+    from tests.conftest import _checkout
+    _basic(client)
+    _add(client, "分水A", "2025-02-01", 130)
+    _checkout(client, "甲", {"分水A": 180}, date="2025-03-01")
+    html = client.get(f"/households/{_hid('甲')}/ledger").text
+    assert "分水A" in html, "已结束的租期仍要能看到表名"
+    stats = client.get("/statistics").text
+    assert "分水A" in stats

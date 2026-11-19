@@ -2,7 +2,7 @@
 {% block body %}
 <section class="card">
   <h2>筛选条件</h2>
-  <p class="hint">账期按抄表日期划分。「账期起 / 止」筛选的是每条账期的结束日期。</p>
+  <p class="hint">账期按抄表日期划分。「账期起 / 止」筛选的是每条账期的结束日期。缴费与收费按同一日期区间各自筛选,不做周期对齐假设。</p>
   <form method="get" action="/statistics">
     <div class="formgrid">
       <div class="field"><label for="s-type">统计范围</label>
@@ -15,66 +15,78 @@
         <select id="s-hh" name="household_id"><option value="">全部租户</option>
           {% for x in households %}<option value="{{ x.id }}"{% if household_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
         </select></div>
-      <div class="field"><label for="s-meter">分表</label>
-        <select id="s-meter" name="meter_id"><option value="">全部分表</option>
-          {% for x in meters %}<option value="{{ x.id }}"{% if meter_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
+      <div class="field"><label for="s-line">计量线</label>
+        <select id="s-line" name="meter_id"><option value="">全部计量线</option>
+          {% for x in lines %}<option value="{{ x.id }}"{% if meter_id == x.id|string %} selected{% endif %}>{{ x.household_name }} · {{ type_name(x.meter_type) }}{% if x.meter_name %} · {{ x.meter_name }}{% endif %}</option>{% endfor %}
         </select></div>
       <div class="field"><label for="s-from">账期起</label><input id="s-from" type="date" name="date_from" value="{{ date_from }}"></div>
       <div class="field"><label for="s-to">账期止</label><input id="s-to" type="date" name="date_to" value="{{ date_to }}"></div>
-      <div class="field"><label for="s-billed">出账状态</label>
-        <select id="s-billed" name="billed">
-          <option value=""{% if billed == '' %} selected{% endif %}>全部</option>
-          <option value="1"{% if billed == '1' %} selected{% endif %}>已出账</option>
-          <option value="0"{% if billed == '0' %} selected{% endif %}>待出账</option>
-        </select></div>
     </div>
     <div class="actions">
       <button type="submit">查询</button>
       <a class="btn ghost" href="/statistics">清除条件</a>
       <a class="btn ghost" href="/statistics/pdf?{{ qs }}">导出 PDF</a>
-      <a class="btn ghost" href="/adjustments">± 冲正记录</a>
     </div>
   </form>
 </section>
 
 <div class="stats">
-  <div class="stat"><div class="k">用水量合计</div><div class="v">{{ '{:,}'.format(total_water) }}<span class="u"> 吨</span></div></div>
-  <div class="stat"><div class="k">用电量合计</div><div class="v">{{ '{:,}'.format(total_elec) }}<span class="u"> 度</span></div></div>
-  <div class="stat"><div class="k">账单金额</div><div class="v">{{ money(total_amount) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">冲正合计</div><div class="v">{{ money(adj_total) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">应收净额</div><div class="v">{{ money(net_amount) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">水用量</div><div class="v">{{ '{:,}'.format(total_water) }}</div></div>
+  <div class="stat"><div class="k">电用量</div><div class="v">{{ '{:,}'.format(total_elec) }}</div></div>
+  <div class="stat"><div class="k">向租户应收</div><div class="v">{{ money(total_amount) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">向部门缴费</div><div class="v">{{ money(paid_total) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">毛差</div><div class="v">{{ money(margin) }}<span class="u"> 元</span></div></div>
 </div>
 
+{% if gaps %}
 <section class="card">
-  <h2>明细(共 {{ total_rows }} 条·第 {{ page }}/{{ pages }} 页)</h2>
+  <h2>空档期用量</h2>
+  <p class="hint">上一任退租与下一任入住之间无人使用的区间。<b>归房东,不进任何租户账单。</b>合计 {{ '{:,}'.format(gap_usage) }}。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>租户</th><th>分表</th><th>账期</th><th>用量</th><th>单价</th><th>金额(元)</th><th>状态</th></tr></thead>
+      <thead><tr><th>表</th><th>区间</th><th>用量</th></tr></thead>
       <tbody>
-        {% if not page_rows %}<tr><td colspan="7" class="empty">没有符合条件的记录,试试放宽筛选条件。</td></tr>{% endif %}
-        {% for x in page_rows %}
-        <tr>
-          <td>{{ x.household_name }}</td>
-          <td>{{ x.meter_name }} <span class="tag muted">{{ type_name(x.meter_type) }}</span></td>
-          <td>{{ x.get('start', '') }} ~ {{ x.end }}</td>
-          <td class="num">{{ '{:,}'.format(x.usage) }}</td>
-          <td class="num">{{ x.unit_price }}</td>
-          <td class="num">{{ money(x.amount) }}</td>
-          <td>{% if x.billed %}<span class="tag ok">已出账</span>{% else %}<span class="tag warn">待出账</span>{% endif %}</td>
-        </tr>
-        {% endfor %}
+      {% for g in gaps %}
+        <tr><td>{{ g.meter_name }}</td><td>{{ g.start }} ~ {{ g.end }}</td><td class="num">{{ '{:,}'.format(g.usage) }}</td></tr>
+      {% endfor %}
       </tbody>
     </table>
   </div>
-  {{ pager | safe }}
 </section>
+{% endif %}
 
 <section class="card">
-  <h2>冲正汇总</h2>
-  <p class="hint">按租户累计的调整金额,已计入上方的应收净额。</p>
-  <ul class="plain">
-    {% if adjustments %}{% for x in adjustments %}<li>{{ x.name }}: {{ money(x.total) }} 元</li>{% endfor %}
-    {% else %}<li>无</li>{% endif %}
-  </ul>
+  <h2>账期明细 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>租户</th><th>类型</th><th>线名</th><th>账期起</th><th>账期止</th><th>用量</th><th>单价</th><th>金额(元)</th></tr></thead>
+      <tbody>
+        {% if not page_rows %}<tr><td colspan="8" class="empty">没有符合条件的账期。</td></tr>{% endif %}
+        {% for x in page_rows %}
+        <tr>
+          <td>{{ x.household_name }}</td>
+          <td>{{ type_name(x.meter_type) }}</td>
+          <td>{{ x.display_name or '—' }}</td>
+          <td>{{ x.start }}</td>
+          <td>{{ x.end }}</td>
+          <td class="num">{{ '{:,}'.format(x.usage) }}</td>
+          <td class="num">{{ x.unit_price }}</td>
+          <td class="num">{{ money(x.amount) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if page_rows %}
+      <tfoot>
+        <tr>
+          <th colspan="5">本页合计</th>
+          <th class="num">{{ '{:,}'.format(page_rows|sum(attribute='usage')) }}</th>
+          <th></th>
+          <th class="num">{{ money(page_rows|sum(attribute='amount')) }}</th>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+  {{ pager | safe }}
 </section>
 {% endblock %}

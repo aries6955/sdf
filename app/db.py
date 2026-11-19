@@ -4,6 +4,11 @@ from pathlib import Path
 DB_PATH = Path(__file__).resolve().parent.parent / "data.sqlite3"
 
 
+# 模型要点见 GLOSSARY.md 与 docs/adr/0012..0023。
+#
+# 一条「计量线」是一段连续的计量关系:某个租户、某一类水电、从入户读数到退租读数。
+# 它是归属的唯一真源 —— meters 上没有租户字段,「现在归谁」一律从 lines 的开放行推导。
+# 换表不切断计量线:旧表终读数与新表基数各记一条 reading,用量按表分段累加。
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -16,76 +21,65 @@ CREATE TABLE IF NOT EXISTS households (
     note TEXT NOT NULL DEFAULT ''
 );
 
+-- 计量线 = 租期。move_out_date 为空即「在用」;同一块表同一时间只有一条开放线。
+CREATE TABLE IF NOT EXISTS lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    meter_type TEXT NOT NULL CHECK (meter_type IN ('water', 'electricity')),
+    label TEXT NOT NULL DEFAULT '',
+    move_in_date TEXT NOT NULL,
+    move_out_date TEXT,
+    move_in_value INTEGER NOT NULL,
+    move_out_value INTEGER,
+    note TEXT NOT NULL DEFAULT ''
+);
+
+-- 表:总表(base 为空)与分表(装表时录一次 base)。retired_on 只由换表写入。
 CREATE TABLE IF NOT EXISTS meters (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     meter_type TEXT NOT NULL CHECK (meter_type IN ('water', 'electricity')),
     level TEXT NOT NULL CHECK (level IN ('main', 'sub')),
     main_meter_id INTEGER REFERENCES meters(id),
-    household_id INTEGER REFERENCES households(id),
     phase TEXT NOT NULL DEFAULT 'single' CHECK (phase IN ('single', 'three')),
     base_value INTEGER,
     base_date TEXT,
-    active INTEGER NOT NULL DEFAULT 1,
+    installed_on TEXT,
+    retired_on TEXT,
+    line_id INTEGER REFERENCES lines(id),
     note TEXT NOT NULL DEFAULT ''
 );
 
--- 租期:记录哪块表从哪个读数起归哪个租户。交接读数既是上任终读数,也是新租户起始读数。
-CREATE TABLE IF NOT EXISTS takeovers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    meter_id INTEGER NOT NULL REFERENCES meters(id),
-    household_id INTEGER NOT NULL REFERENCES households(id),
-    start_date TEXT NOT NULL,
-    start_value INTEGER NOT NULL,
-    reading_id INTEGER REFERENCES readings(id),
-    note TEXT NOT NULL DEFAULT ''
-);
+-- 一块表同一时间只服务一条计量线(换下的表 line_id 为空,保留历史)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meters_one_line
+    ON meters(line_id) WHERE line_id IS NOT NULL;
 
+-- 读数挂在计量线上,另记取自哪块表。
+-- kind: 'move_in' 入户 | 'periodic' 抄表 | 'move_out' 退租 | 'switch_out' 旧表终读数 | 'switch_base' 新表基数
+-- 前三种是账期边界,后两种是换表内部读数,只参与分段累加。
 CREATE TABLE IF NOT EXISTS readings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    line_id INTEGER NOT NULL REFERENCES lines(id),
     meter_id INTEGER NOT NULL REFERENCES meters(id),
     reading_date TEXT NOT NULL,
     value INTEGER NOT NULL,
-    department_price REAL NOT NULL DEFAULT 0,
-    tenant_price REAL NOT NULL DEFAULT 0,
-    billed INTEGER NOT NULL DEFAULT 0,
-    is_initial INTEGER NOT NULL DEFAULT 0,
     r1 INTEGER,
     r2 INTEGER,
     r3 INTEGER,
+    tenant_price REAL NOT NULL DEFAULT 0,
+    kind TEXT NOT NULL DEFAULT 'periodic'
+        CHECK (kind IN ('move_in', 'periodic', 'move_out', 'switch_out', 'switch_base')),
     note TEXT NOT NULL DEFAULT ''
 );
 
-CREATE INDEX IF NOT EXISTS idx_readings_meter_date ON readings(meter_id, reading_date, id);
+CREATE INDEX IF NOT EXISTS idx_readings_line ON readings(line_id, reading_date, id);
+CREATE INDEX IF NOT EXISTS idx_readings_meter ON readings(meter_id, reading_date, id);
 
-CREATE TABLE IF NOT EXISTS meter_switches (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    old_meter_id INTEGER REFERENCES meters(id),
-    new_meter_id INTEGER REFERENCES meters(id),
-    switch_date TEXT NOT NULL,
-    old_final_value INTEGER NOT NULL,
-    new_base_value INTEGER NOT NULL,
-    note TEXT NOT NULL DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS payments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    meter_id INTEGER NOT NULL REFERENCES meters(id),
-    payment_date TEXT NOT NULL,
-    amount REAL NOT NULL,
-    period_start TEXT NOT NULL,
-    period_end TEXT NOT NULL,
-    unit_price REAL NOT NULL DEFAULT 0,
-    reading_value INTEGER,
-    note TEXT NOT NULL DEFAULT ''
-);
-
--- 应收:一次出账对应一条,金额固定;收款单独记录,可多次、可不收足
+-- 应收:一个账期一条,抄表当场生成。
 CREATE TABLE IF NOT EXISTS receivables (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    line_id INTEGER NOT NULL REFERENCES lines(id),
     household_id INTEGER NOT NULL REFERENCES households(id),
-    meter_id INTEGER NOT NULL REFERENCES meters(id),
-    reading_id INTEGER NOT NULL UNIQUE REFERENCES readings(id),
     period_start TEXT NOT NULL,
     period_end TEXT NOT NULL,
     usage_amount INTEGER NOT NULL,
@@ -94,21 +88,36 @@ CREATE TABLE IF NOT EXISTS receivables (
     created_at TEXT NOT NULL
 );
 
--- 实收:一次收款可覆盖一条应收,金额可小于应收(部分收款)
+CREATE INDEX IF NOT EXISTS idx_receivables_hh ON receivables(household_id, period_end, id);
+
+-- 实收 / 退款:记在租户名下,不指定账单。冲抵按最早欠账优先自动推导。
 CREATE TABLE IF NOT EXISTS receipts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    receivable_id INTEGER NOT NULL REFERENCES receivables(id),
-    receipt_date TEXT NOT NULL,
+    household_id INTEGER NOT NULL REFERENCES households(id),
+    entry_date TEXT NOT NULL,
+    amount REAL NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'receipt' CHECK (kind IN ('receipt', 'refund')),
+    note TEXT NOT NULL DEFAULT ''
+);
+
+-- 缴费:照部门账单手填,系统不推算金额。
+CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meter_id INTEGER NOT NULL REFERENCES meters(id),
+    payment_date TEXT NOT NULL,
+    reading_value INTEGER,
+    unit_price REAL,
     amount REAL NOT NULL,
     note TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS adjustments (
+CREATE TABLE IF NOT EXISTS meter_switches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    reading_id INTEGER NOT NULL REFERENCES readings(id),
-    household_id INTEGER NOT NULL REFERENCES households(id),
-    amount REAL NOT NULL,
-    adjust_date TEXT NOT NULL,
+    old_meter_id INTEGER NOT NULL REFERENCES meters(id),
+    new_meter_id INTEGER NOT NULL REFERENCES meters(id),
+    switch_date TEXT NOT NULL,
+    old_final_value INTEGER NOT NULL,
+    new_base_value INTEGER NOT NULL,
     note TEXT NOT NULL DEFAULT ''
 );
 """
@@ -124,49 +133,6 @@ def connect() -> sqlite3.Connection:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
-        _migrate(conn)
-
-
-def _migrate(conn: sqlite3.Connection) -> None:
-    """给旧数据库补上新增的列(幂等)。"""
-    cols = {r["name"] for r in conn.execute("PRAGMA table_info(payments)")}
-    if "unit_price" not in cols:
-        conn.execute("ALTER TABLE payments ADD COLUMN unit_price REAL NOT NULL DEFAULT 0")
-    if "reading_value" not in cols:
-        conn.execute("ALTER TABLE payments ADD COLUMN reading_value INTEGER")
-    mcols = {r["name"] for r in conn.execute("PRAGMA table_info(meters)")}
-    if "phase" not in mcols:
-        conn.execute("ALTER TABLE meters ADD COLUMN phase TEXT NOT NULL DEFAULT 'single'")
-    if "base_value" not in mcols:
-        conn.execute("ALTER TABLE meters ADD COLUMN base_value INTEGER")
-    if "base_date" not in mcols:
-        conn.execute("ALTER TABLE meters ADD COLUMN base_date TEXT")
-    rcols = {r["name"] for r in conn.execute("PRAGMA table_info(readings)")}
-    for col in ("r1", "r2", "r3"):
-        if col not in rcols:
-            conn.execute(f"ALTER TABLE readings ADD COLUMN {col} INTEGER")
-    _backfill_takeovers(conn)
-
-
-def _backfill_takeovers(conn: sqlite3.Connection) -> None:
-    """给旧数据补租期记录:每块已绑定租户的表,以其基数读数作为租期起点。"""
-    has_rows = conn.execute("SELECT 1 FROM takeovers LIMIT 1").fetchone()
-    if has_rows:
-        return
-    for m in conn.execute(
-        "SELECT id, household_id FROM meters WHERE household_id IS NOT NULL"
-    ).fetchall():
-        base = conn.execute(
-            "SELECT id, reading_date, value FROM readings WHERE meter_id=? AND is_initial=1 "
-            "ORDER BY reading_date, id LIMIT 1", (m["id"],)
-        ).fetchone()
-        if base:
-            conn.execute(
-                "INSERT INTO takeovers(meter_id,household_id,start_date,start_value,reading_id,note) "
-                "VALUES (?,?,?,?,?,?)",
-                (m["id"], m["household_id"], base["reading_date"], base["value"],
-                 base["id"], "历史数据回填"),
-            )
 
 
 def get_setting(conn: sqlite3.Connection, key: str, default: str = "") -> str:

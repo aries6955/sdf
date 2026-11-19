@@ -2,50 +2,58 @@
 {% block body %}
 <div class="stats">
   <div class="stat"><div class="k">应收合计</div><div class="v">{{ money(ledger.total_due) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">实收合计</div><div class="v">{{ money(ledger.total_received) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">已收合计</div><div class="v">{{ money(ledger.total_paid) }}<span class="u"> 元</span></div></div>
   <div class="stat"><div class="k">欠款</div><div class="v">{{ money(ledger.outstanding) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">冲正调整</div><div class="v">{{ money(ledger.adjustments) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">预收余额</div><div class="v">{{ money(ledger.balance) }}<span class="u"> 元</span></div></div>
 </div>
 
-{% if ledger.outstanding > 0.005 %}
-<div class="note"><b>该租户仍有欠款 {{ money(ledger.outstanding) }} 元。</b>
-结清后才能退租。</div>
+{% if lines %}
+<section class="card">
+  <h2>在用计量线</h2>
+  <p class="hint">每条线独立算账:账期由入住读数与退租读数划界。</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>类型</th><th>线名</th><th>当前表</th><th>入住日期</th><th>入住读数</th></tr></thead>
+      <tbody>
+      {% for l in lines %}
+        <tr>
+          <td>{{ type_name(l.meter_type) }}</td>
+          <td>{{ l.label or '—' }}</td>
+          <td>{{ l.meter_name or '—' }}</td>
+          <td>{{ l.move_in_date }}</td>
+          <td class="num">{{ '{:,}'.format(l.move_in_value) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 {% endif %}
 
 <section class="card">
   <h2>应收与收款明细</h2>
-  <p class="hint">每笔应收对应一次出账;可分批收款,未收足即为欠款。</p>
+  <p class="hint">抄表时自动生成应收。收款记在租户名下,按最早欠账优先自动冲抵,多收的成为预收余额。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>表</th><th>账期</th><th>用量</th><th>单价</th><th>应收(元)</th><th>已收(元)</th><th>欠款(元)</th><th>状态</th><th>收款</th></tr></thead>
+      <thead><tr><th>类型</th><th>线名</th><th>账期</th><th>用量</th><th>单价</th><th>应收(元)</th><th>已收(元)</th><th>欠款(元)</th><th>状态</th></tr></thead>
       <tbody>
         {% if not ledger.rows %}
-        <tr><td colspan="9" class="empty">还没有出账记录。到「抄表」录入读数并出账后,这里会生成应收。</td></tr>
+        <tr><td colspan="9" class="empty">还没有账期。到「抄表」录入读数后,这里会自动生成应收。</td></tr>
         {% endif %}
         {% for x in ledger.rows %}
         <tr>
-          <td>{{ x.meter_name }}</td>
+          <td>{{ type_name(x.meter_type) }}</td>
+          <td>{{ x.meter_name or x.label or '—' }}</td>
           <td>{{ x.period_start }} ~ {{ x.period_end }}</td>
           <td class="num">{{ '{:,}'.format(x.usage) }}</td>
           <td class="num">{{ x.unit_price }}</td>
           <td class="num">{{ money(x.amount) }}</td>
-          <td class="num">{{ money(x.received) }}</td>
+          <td class="num">{{ money(x.paid) }}</td>
           <td class="num">{{ money(x.outstanding) }}</td>
           <td>
             {% if x.settled %}<span class="tag ok">已结清</span>
-            {% elif x.has_receipts %}<span class="tag warn">部分收款</span>
-            {% else %}<span class="tag muted">未收款</span>{% endif %}
-          </td>
-          <td>
-            {% if not x.settled %}
-            <form method="post" action="/receipts/add" class="inlineform">
-              <input type="hidden" name="receivable_id" value="{{ x.id }}">
-              <input type="date" name="receipt_date" value="{{ today }}" required aria-label="收款日期">
-              <input type="number" step="0.01" name="amount" value="{{ '%.2f'|format(x.outstanding) }}"
-                     required aria-label="收款金额" style="width:100px">
-              <button class="small" type="submit">登记收款</button>
-            </form>
-            {% else %}—{% endif %}
+            {% elif x.partial %}<span class="tag warn">部分收款</span>
+            {% else %}<span class="tag warn">未收款</span>{% endif %}
           </td>
         </tr>
         {% endfor %}
@@ -55,37 +63,101 @@
 </section>
 
 <section class="card">
-  <h2>当前使用的表</h2>
+  <h2>收款与退款</h2>
+  <form method="post" action="/receipts/add">
+    <input type="hidden" name="household_id" value="{{ household.id }}">
+    <div class="formgrid">
+      <div class="field"><label for="rc-date">日期</label>
+        <input id="rc-date" type="date" name="entry_date" value="{{ today }}" required></div>
+      <div class="field"><label for="rc-kind">类型</label>
+        <select id="rc-kind" name="kind">
+          <option value="receipt">收款</option>
+          <option value="refund">退款</option>
+        </select></div>
+      <div class="field"><label for="rc-amount">金额</label>
+        <input id="rc-amount" type="number" step="0.01" name="amount" placeholder="实际收到的钱" required></div>
+      <div class="field"><label for="rc-note">备注</label><input id="rc-note" name="note" placeholder="选填"></div>
+    </div>
+    <div class="actions"><button type="submit">登记</button></div>
+  </form>
+  {% if ledger.entries %}
   <div class="tablewrap">
     <table>
-      <thead><tr><th>表</th><th>类型</th><th>表基数</th><th>本租户起始读数</th><th>起始日期</th></tr></thead>
+      <thead><tr><th>日期</th><th>类型</th><th>金额(元)</th><th>备注</th><th>操作</th></tr></thead>
       <tbody>
-        {% if not meters %}<tr><td colspan="5" class="empty">当前没有绑定分表。</td></tr>{% endif %}
-        {% for m in meters %}
+      {% for e in ledger.entries %}
         <tr>
-          <td>{{ m.name }}</td>
-          <td>{{ type_name(m.meter_type) }}{{ level_name(m.level) }}</td>
-          <td class="num">{{ '{:,}'.format(m.base_value) if m.base_value is not none else '—' }}</td>
-          <td class="num">{{ '{:,}'.format(m.start_value) if m.start_value is not none else '—' }}</td>
-          <td>{{ m.start_date or '—' }}</td>
+          <td>{{ e.entry_date }}</td>
+          <td>{% if e.kind == 'receipt' %}<span class="tag ok">收款</span>{% else %}<span class="tag warn">退款</span>{% endif %}</td>
+          <td class="num">{{ money(e.amount) }}</td>
+          <td class="wrap">{{ e.note or '—' }}</td>
+          <td>
+            <form method="post" action="/receipts/delete" onsubmit="return confirm('删除这条记录?相关账期会解锁。')">
+              <input type="hidden" name="id" value="{{ e.id }}">
+              <button class="danger small" type="submit">删除</button>
+            </form>
+          </td>
         </tr>
-        {% endfor %}
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+{% if lines %}
+<section class="card" id="checkout">
+  <h2>办理退租</h2>
+  <p class="hint">录入每条线退租当天的读数,系统当场结算本租期并关闭租期。只要求算清差异,不要求尾款已收 —— 未收部分留在台账里继续追。</p>
+  <form method="post" action="/households/checkout">
+    <input type="hidden" name="id" value="{{ household.id }}">
+    <div class="formgrid">
+      <div class="field"><label for="co-date">退租日期</label>
+        <input id="co-date" type="date" name="move_out_date" value="{{ today }}" required></div>
+    </div>
+    <div class="card-section">
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>类型</th><th>线名</th><th>当前表</th><th>上次读数</th><th>退租读数</th></tr></thead>
+          <tbody>
+          {% for l in lines %}
+            {% set meter = l.meter_name %}
+            <tr>
+              <td>{{ type_name(l.meter_type) }}</td>
+              <td>{{ l.label or '—' }}</td>
+              <td>{{ meter or '—' }}</td>
+              <td class="num">{{ '{:,}'.format(l.move_in_value) }}</td>
+              <td><input type="number" name="out_{{ l.id }}" placeholder="表上的读数" aria-label="{{ l.label or l.meter_type }} 退租读数"></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="actions"><button type="submit" class="danger">确认退租</button></div>
+  </form>
+</section>
+{% endif %}
+
+{% if closed %}
+<section class="card">
+  <h2>已结束的租期</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>类型</th><th>线名</th><th>入住</th><th>退租</th><th>退租读数</th></tr></thead>
+      <tbody>
+      {% for l in closed %}
+        <tr>
+          <td>{{ type_name(l.meter_type) }}</td>
+          <td>{{ l.label or '—' }}</td>
+          <td>{{ l.move_in_date }}</td>
+          <td>{{ l.move_out_date }}</td>
+          <td class="num">{{ '{:,}'.format(l.move_out_value) if l.move_out_value is not none else '—' }}</td>
+        </tr>
+      {% endfor %}
       </tbody>
     </table>
   </div>
 </section>
-
-<section class="card">
-  <h2>退租</h2>
-  <p class="hint">退租会解绑该租户的分表(表可以给下一个租户),历史账目与台账保留。
-    有欠款时必须先收清款项。</p>
-  <div class="actions">
-    <form method="post" action="/households/checkout"
-          onsubmit="return confirm('确认让「{{ household.name }}」退租?表将解绑,可分配给下一个租户。')">
-      <input type="hidden" name="id" value="{{ household.id }}">
-      <button class="warn" type="submit"{% if ledger.outstanding > 0.005 %} disabled{% endif %}>办理退租</button>
-    </form>
-    <a class="btn ghost" href="/households">返回租户列表</a>
-  </div>
-</section>
+{% endif %}
 {% endblock %}

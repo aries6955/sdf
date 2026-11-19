@@ -20,9 +20,9 @@ colors:
   brand:     "#3459e6"   # 品牌蓝,只用于主按钮/当前项/关键强调
   brand-ink: "#1e3a9c"
   brand-soft:"#eef2ff"
-  positive:  "#067647"   # 已出账/正常
+  positive:  "#067647"   # 在用/已结清
   positive-soft: "#ecfdf3"
-  caution:   "#b54708"   # 待出账/提示
+  caution:   "#b54708"   # 未收款/空置/提示
   caution-soft: "#fffaeb"
   negative:  "#b42318"   # 删除/错误
   negative-soft: "#fef3f2"
@@ -100,7 +100,8 @@ motion:
 
 - 表格:表头浅灰底 + sticky;行高约 30px;hover 浅灰。
 - 数字列右对齐 + `tabular-nums`。
-- 状态用 pill 标签:`已出账`绿、`待出账`橙、`总表`灰、`分表`蓝。
+- 状态用 pill 标签:`在用`/`已结清`绿、`未收款`/`空置`/`已换下`橙、`总表`灰、`分表`蓝。
+- 计量线详情统一用一张表:类型 / 线名 / 账期 / 用量 / 单价 / 应收 / 已收 / 欠款 / 状态。
 - 统计卡:白底细边框,数字 20-26px,不加上色左边条以外的装饰。
 
 ### Login

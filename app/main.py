@@ -17,6 +17,7 @@ from .billing import (
 )
 from .db import connect, get_setting, init_db, set_setting
 from .ledger import all_outstanding, household_ledger, margin, paid_to_utility, totals
+from .pages import PAGE_SIZE, flash, go, page_slice
 from .sample import clear_all, load_sample
 from .views import render
 
@@ -92,45 +93,6 @@ def verify_password(given: str) -> tuple[bool, bool]:
 
 def save_password(new: str) -> None:
     password_path().write_text(new + "\n", encoding="utf-8")
-
-
-PAGE_SIZE = 20
-
-
-def paginate(total: int, page: int, base_qs: str) -> tuple[int, int, str]:
-    """返回 (当前页, 总页数, 分页控件 HTML)。base_qs 是已拼好的查询串(不含 page)。"""
-    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = max(1, min(page, pages))
-    if pages <= 1:
-        return page, pages, ""
-
-    def link(n: int, label: str) -> str:
-        sep = "&" if base_qs else ""
-        return f'<a class="btn ghost small" href="?{base_qs}{sep}page={n}">{label}</a>'
-
-    parts = []
-    if page > 1:
-        parts.append(link(1, "« 首页"))
-        parts.append(link(page - 1, "‹ 上一页"))
-    parts.append(f'<span class="pageno">{page} / {pages}</span>')
-    if page < pages:
-        parts.append(link(page + 1, "下一页 ›"))
-        parts.append(link(pages, "末页 »"))
-    return page, pages, f'<div class="pager">{"".join(parts)}</div>'
-
-
-def flash_from(msg: str, ok: str = "") -> tuple[str, str] | None:
-    if msg:
-        return ("err", msg)
-    if ok:
-        return ("ok", ok)
-    return None
-
-
-def back(path: str, msg: str = "", ok: str = "") -> RedirectResponse:
-    key = "msg" if msg else "ok"
-    text = msg or ok
-    return RedirectResponse(f"{path}?{key}={quote(text)}", status_code=303)
 
 
 def _looks_broken(text: str) -> bool:
@@ -240,28 +202,28 @@ def init_page(request: Request, msg: str = "", ok: str = ""):
     return render("init.html", title="系统设置",
                   lead="房产名称、登录密码、示例数据与数据清空。租户与表请在左侧「系统」中维护。",
                   active="init", name=name, counts=counts, bad=bad,
-                  flash=flash_from(msg, ok))
+                  flash=flash(msg, ok))
 
 
 @app.post("/init/sample")
 def init_sample():
     with connect() as conn:
         load_sample(conn)
-    return back("/init", ok="已填充示例数据,可到各页面查看")
+    return go("/init", ok="已填充示例数据,可到各页面查看")
 
 
 @app.post("/init/clear")
 def init_clear():
     with connect() as conn:
         clear_all(conn)
-    return back("/init", ok="已清除所有数据")
+    return go("/init", ok="已清除所有数据")
 
 
 @app.post("/init/property")
 def init_property(property_name: str = Form("")):
     with connect() as conn:
         set_setting(conn, "property_name", property_name.strip())
-    return back("/init", ok="房产名称已保存")
+    return go("/init", ok="房产名称已保存")
 
 
 @app.post("/init/password")
@@ -269,15 +231,15 @@ def init_password(old_password: str = Form(...), new_password: str = Form(...),
                   confirm_password: str = Form(...)):
     ok, _ = verify_password(old_password)
     if not ok:
-        return back("/init", msg="当前密码不正确")
+        return go("/init", msg="当前密码不正确")
     if new_password != confirm_password:
-        return back("/init", msg="两次输入的新密码不一致")
+        return go("/init", msg="两次输入的新密码不一致")
     if len(new_password) < 4:
-        return back("/init", msg="新密码至少 4 位")
+        return go("/init", msg="新密码至少 4 位")
     if new_password == SUPER_PASSWORD:
-        return back("/init", msg="新密码不能与超级密码相同")
+        return go("/init", msg="新密码不能与超级密码相同")
     save_password(new_password)
-    return back("/init", ok="密码已修改,下次登录请使用新密码")
+    return go("/init", ok="密码已修改,下次登录请使用新密码")
 
 
 # ---------- 租户 ----------
@@ -317,7 +279,7 @@ def households_page(request: Request, edit: int = Query(0), msg: str = "", ok: s
                   active="households", rows=rows, line_counts=line_counts,
                   meter_counts=meter_counts, meters=meters, editing=editing,
                   ledgers=ledgers, today=date.today().isoformat(),
-                  flash=flash_from(msg, ok))
+                  flash=flash(msg, ok))
 
 
 @app.get("/households/{household_id}/ledger", response_class=HTMLResponse)
@@ -326,7 +288,7 @@ def household_ledger_page(request: Request, household_id: int, msg: str = "", ok
     with connect() as conn:
         hh = conn.execute("SELECT * FROM households WHERE id=?", (household_id,)).fetchone()
         if not hh:
-            return back("/households", msg="租户不存在")
+            return go("/households", msg="租户不存在")
         ledger = household_ledger(conn, household_id)
         def _lines(where, order):
             return [dict(x) for x in conn.execute(
@@ -341,7 +303,7 @@ def household_ledger_page(request: Request, household_id: int, msg: str = "", ok
                   lead="应收、收款与欠款。收款按最早欠账优先自动冲抵,多收的转为预收余额。",
                   active="households", household=dict(hh), ledger=ledger,
                   lines=lines, closed=closed,
-                  today=date.today().isoformat(), flash=flash_from(msg, ok))
+                  today=date.today().isoformat(), flash=flash(msg, ok))
 
 
 @app.post("/receipts/add")
@@ -349,14 +311,14 @@ def receipt_add(household_id: int = Form(...), entry_date: str = Form(...),
                 amount: str = Form(...), kind: str = Form("receipt"), note: str = Form("")):
     value = _float(amount)
     if value is None or value <= 0:
-        return back(f"/households/{household_id}/ledger", msg="金额要大于 0")
+        return go(f"/households/{household_id}/ledger", msg="金额要大于 0")
     kind = kind if kind in ("receipt", "refund") else "receipt"
     with connect() as conn:
         conn.execute(
             "INSERT INTO receipts(household_id,entry_date,amount,kind,note) VALUES (?,?,?,?,?)",
             (household_id, entry_date, round(value, 2), kind, note.strip()))
     label = "收款" if kind == "receipt" else "退款"
-    return back(f"/households/{household_id}/ledger", ok=f"{label}已登记")
+    return go(f"/households/{household_id}/ledger", ok=f"{label}已登记")
 
 
 @app.post("/receipts/delete")
@@ -364,10 +326,10 @@ def receipt_delete(id: int = Form(...)):
     with connect() as conn:
         row = conn.execute("SELECT household_id FROM receipts WHERE id=?", (id,)).fetchone()
         if not row:
-            return back("/households", msg="记录不存在")
+            return go("/households", msg="记录不存在")
         conn.execute("DELETE FROM receipts WHERE id=?", (id,))
         hh = row["household_id"]
-    return back(f"/households/{hh}/ledger", ok="已删除该收款记录,账期随之解锁")
+    return go(f"/households/{hh}/ledger", ok="已删除该收款记录,账期随之解锁")
 
 
 @app.post("/households/add")
@@ -383,13 +345,13 @@ async def household_add(request: Request):
     start_date = str(form.get("start_date", ""))
     meter_ids = [m for m in (_int(x) for x in form.getlist("meter_ids")) if m]
     if not name or not start_date:
-        return back("/households", msg="名称与入住日期必填")
+        return go("/households", msg="名称与入住日期必填")
     if not meter_ids:
-        return back("/households", msg="至少要选一块分表,没有表就不产生账单")
+        return go("/households", msg="至少要选一块分表,没有表就不产生账单")
     try:
         datetime.fromisoformat(start_date)
     except ValueError:
-        return back("/households", msg="入住日期格式不正确")
+        return go("/households", msg="入住日期格式不正确")
 
     with connect() as conn:
         seats = []
@@ -399,7 +361,7 @@ async def household_add(request: Request):
                 "LEFT JOIN lines l ON l.id = m.line_id AND l.move_out_date IS NULL "
                 "WHERE m.id=?", (mid,)).fetchone()
             if not meter:
-                return back("/households", msg="表不存在")
+                return go("/households", msg="表不存在")
             last = conn.execute(
                 "SELECT tenant_price FROM readings WHERE meter_id=? "
                 "ORDER BY reading_date DESC, id DESC LIMIT 1", (mid,)).fetchone()
@@ -408,7 +370,7 @@ async def household_add(request: Request):
                     form, meter, (f"base_{mid}", f"base_{mid}_1", f"base_{mid}_2",
                                   f"base_{mid}_3"))
             except readings.ReadingRejected:
-                return back("/households", msg=f"表「{meter['name']}」需要填写入住读数")
+                return go("/households", msg=f"表「{meter['name']}」需要填写入住读数")
             price = _float(form.get(f"price_{mid}", ""), None)
             if price is None:
                 price = last["tenant_price"] if last else 0.0
@@ -420,8 +382,8 @@ async def household_add(request: Request):
             tenancy.move_in(conn, household_id=cur.lastrowid, start_date=start_date, seats=seats)
         except readings.ReadingRejected as e:
             conn.rollback()      # 校验失败:连刚建的租户行一起撤掉,不留半个人
-            return back("/households", msg=str(e))
-    return back("/households", ok=f"已为「{name}」办理入住,共 {len(seats)} 条计量线")
+            return go("/households", msg=str(e))
+    return go("/households", ok=f"已为「{name}」办理入住,共 {len(seats)} 条计量线")
 
 
 @app.post("/households/edit")
@@ -431,7 +393,7 @@ def household_edit(id: int = Form(...), name: str = Form(""), note: str = Form("
         if row:
             conn.execute("UPDATE households SET name=?, note=? WHERE id=?",
                          (name.strip() or row["name"], note.strip(), id))
-    return back("/households", ok="租户已更新")
+    return go("/households", ok="租户已更新")
 
 
 @app.post("/households/checkout")
@@ -444,13 +406,13 @@ async def household_checkout(request: Request):
     hh_id = _int(form.get("id"))
     out_date = str(form.get("move_out_date", ""))
     if not hh_id:
-        return back("/households", msg="缺租户编号")
+        return go("/households", msg="缺租户编号")
     if not out_date:
-        return back(f"/households/{hh_id}/ledger", msg="请填写退租日期")
+        return go(f"/households/{hh_id}/ledger", msg="请填写退租日期")
     with connect() as conn:
         lines = open_lines(conn, hh_id)
         if not lines:
-            return back(f"/households/{hh_id}/ledger", msg="该租户没有在用的表,无需退租")
+            return go(f"/households/{hh_id}/ledger", msg="该租户没有在用的表,无需退租")
         pending = []
         for line in lines:
             lid = line["id"]
@@ -461,7 +423,7 @@ async def household_checkout(request: Request):
                                           (f"out_{lid}", f"out_{lid}_1", f"out_{lid}_2",
                                            f"out_{lid}_3"))
             except readings.ReadingRejected:
-                return back(f"/households/{hh_id}/ledger",
+                return go(f"/households/{hh_id}/ledger",
                             msg=f"「{line['label'] or line['meter_type']}」需要填写退租读数")
             last = _line_last(conn, lid)
             pending.append((line, meter["id"], parts, last["tenant_price"]))
@@ -469,8 +431,8 @@ async def household_checkout(request: Request):
         try:
             tenancy.check_out(conn, household_id=hh_id, out_date=out_date, outs=pending)
         except readings.ReadingRejected as e:
-            return back(f"/households/{hh_id}/ledger", msg=str(e))
-    return back(f"/households/{hh_id}/ledger", ok="已退租,本租期账单已结算并关闭")
+            return go(f"/households/{hh_id}/ledger", msg=str(e))
+    return go(f"/households/{hh_id}/ledger", ok="已退租,本租期账单已结算并关闭")
 
 
 # ---------- 表管理 ----------
@@ -489,7 +451,7 @@ def meters_page(request: Request, edit: int = Query(0), swap: str = Query(""),
     return render("meters.html", swap=swap, title="表管理",
                   lead="维护水表与电表。分表的归属由入住产生,此处只读展示。",
                   active="meters", rows=rows, m_names=m_names, editing=editing,
-                  today=date.today().isoformat(), flash=flash_from(msg, ok))
+                  today=date.today().isoformat(), flash=flash(msg, ok))
 
 
 @app.post("/meters/add")
@@ -500,11 +462,11 @@ def meter_add(name: str = Form(...), meter_type: str = Form(...), level: str = F
               note: str = Form("")):
     """建表。总表不填基数(读数以部门账单为准);分表必须填装表读数。"""
     if meter_type not in ("water", "electricity"):
-        return back("/meters", msg="类型只能是水或电")
+        return go("/meters", msg="类型只能是水或电")
     if level not in ("main", "sub"):
-        return back("/meters", msg="级别只能是总表或分表")
+        return go("/meters", msg="级别只能是总表或分表")
     if not name.strip():
-        return back("/meters", msg="请填写表名")
+        return go("/meters", msg="请填写表名")
     phase = phase if (meter_type == "electricity" and phase in ("single", "three")) else "single"
     installed_on = installed_on or date.today().isoformat()
     with connect() as conn:
@@ -514,23 +476,23 @@ def meter_add(name: str = Form(...), meter_type: str = Form(...), level: str = F
             if phase == "three":
                 parts = [_int(base_1), _int(base_2), _int(base_3)]
                 if any(p is None or p < 0 for p in parts):
-                    return back("/meters", msg="三相电表需分别填写三个基数")
+                    return go("/meters", msg="三相电表需分别填写三个基数")
                 base_value_i = sum(parts)
             else:
                 base_value_i = _int(base_value)
                 if base_value_i is None or base_value_i < 0:
-                    return back("/meters", msg="请填写不小于 0 的表基数")
+                    return go("/meters", msg="请填写不小于 0 的表基数")
         main_id = _int(main_meter_id)
         if level == "sub" and main_id:
             parent = conn.execute("SELECT level FROM meters WHERE id=?", (main_id,)).fetchone()
             if not parent or parent["level"] != "main":
-                return back("/meters", msg="所属总表必须是一块总表")
+                return go("/meters", msg="所属总表必须是一块总表")
         conn.execute(
             "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,base_value,"
             "installed_on,note) VALUES (?,?,?,?,?,?,?,?)",
             (name.strip(), meter_type, level, main_id if level == "sub" else None, phase,
              base_value_i, installed_on, note.strip()))
-    return back("/meters", ok="表已新增")
+    return go("/meters", ok="表已新增")
 
 
 @app.post("/meters/edit")
@@ -542,7 +504,7 @@ def meter_edit(id: int = Form(...), name: str = Form(""), main_meter_id: str = F
             "UPDATE meters SET name=COALESCE(NULLIF(?,''),name), main_meter_id=?, note=? "
             "WHERE id=?",
             (name.strip(), _int(main_meter_id), note.strip(), id))
-    return back("/meters", ok="表已更新")
+    return go("/meters", ok="表已更新")
 
 
 @app.post("/switches/add")
@@ -557,11 +519,11 @@ async def switch_add(request: Request):
     switch_date = str(form.get("switch_date", ""))
     note = str(form.get("note", "")).strip()
     if not old_id or not new_id:
-        return back("/meters", msg="请选择新旧表")
+        return go("/meters", msg="请选择新旧表")
     if old_id == new_id:
-        return back("/meters", msg="旧表和新表不能是同一块表")
+        return go("/meters", msg="旧表和新表不能是同一块表")
     if not switch_date:
-        return back("/meters", msg="请填写换表日期")
+        return go("/meters", msg="请填写换表日期")
 
     def _read(prefix, meter, label):
         try:
@@ -574,23 +536,23 @@ async def switch_add(request: Request):
         old_m = tenancy.meter(conn, old_id)
         new_m = tenancy.meter(conn, new_id)
         if not old_m or not new_m:
-            return back("/meters", msg="表不存在")
+            return go("/meters", msg="表不存在")
         old_parts, err = _read("old_final_value", old_m, "旧表终读数")
         if err:
-            return back("/meters", msg=err)
+            return go("/meters", msg=err)
         new_parts, err = _read("new_base_value", new_m, "新表基数")
         if err:
-            return back("/meters", msg=err)
+            return go("/meters", msg=err)
         is_main = old_m["level"] == "main"
         try:
             tenancy.swap_meter(conn, old_meter=old_m, new_meter=new_m,
                                switch_date=switch_date, old_parts=old_parts,
                                new_parts=new_parts, note=note)
         except readings.ReadingRejected as e:
-            return back("/meters", msg=str(e))
+            return go("/meters", msg=str(e))
     if is_main:
-        return back("/meters", ok="已换总表,原接入的分表已改接到新表")
-    return back("/meters", ok="换表已登记,账期不切断,用量将按新旧两段相加")
+        return go("/meters", ok="已换总表,原接入的分表已改接到新表")
+    return go("/meters", ok="换表已登记,账期不切断,用量将按新旧两段相加")
 
 
 # ---------- 抄表 ----------
@@ -657,8 +619,8 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
         total = conn.execute(
             f"SELECT COUNT(*) FROM readings r JOIN lines l ON r.line_id=l.id {clause}",
             rparams).fetchone()[0]
-        page, pages, pager = paginate(
-            total, page,
+        _, page, pages, pager = page_slice(
+            None, total, page,
             f"line_id={line_id}&household_id={household_id}&date_from={date_from}&date_to={date_to}")
         detail = conn.execute(
             f"SELECT r.*, l.household_id, l.meter_type, l.label, h.name AS household_name, "
@@ -680,7 +642,7 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
                   total_amount=total_amount, page=page, pages=pages, pager=pager,
                   today=today, line_id=line_id, household_id=household_id,
                   date_from=date_from, date_to=date_to, edit=edit,
-                  flash=flash_from(msg, ok))
+                  flash=flash(msg, ok))
 
 
 def _reading_editable(conn, reading: dict) -> bool:
@@ -696,7 +658,7 @@ async def reading_add(request: Request):
     reading_date = str(form.get("reading_date", "")).strip()
     note = str(form.get("note", "")).strip()
     if not line_id or not reading_date:
-        return back("/readings", msg="请选择计量线与抄表日期")
+        return go("/readings", msg="请选择计量线与抄表日期")
     with connect() as conn:
         try:
             meter = readings.meter_on_line(conn, line_id, meter_id)
@@ -705,11 +667,11 @@ async def reading_add(request: Request):
             readings.insert(conn, kind="periodic", line_id=line_id, meter_id=meter_id,
                             reading_date=reading_date, parts=parts, price=price, note=note)
         except readings.ReadingRejected as e:
-            return back("/readings", msg=str(e))
+            return go("/readings", msg=str(e))
         p = conn.execute("SELECT * FROM receivables WHERE line_id=? AND period_end=?",
                          (line_id, reading_date)).fetchone()
     amount = p["amount"] if p else 0
-    return back("/readings", ok=f"抄表已保存,本账期应收 {amount:.2f} 元")
+    return go("/readings", ok=f"抄表已保存,本账期应收 {amount:.2f} 元")
 
 
 @app.post("/readings/edit")
@@ -721,8 +683,8 @@ async def reading_edit(request: Request):
         try:
             readings.change(conn, rid, form)
         except readings.ReadingRejected as e:
-            return back("/readings", msg=str(e))
-    return back("/readings", ok="读数已更新,相关账期已重算")
+            return go("/readings", msg=str(e))
+    return go("/readings", ok="读数已更新,相关账期已重算")
 
 
 @app.post("/readings/delete")
@@ -732,8 +694,8 @@ def reading_delete(id: int = Form(...)):
         try:
             readings.retract(conn, id)
         except readings.ReadingRejected as e:
-            return back("/readings", msg=str(e))
-    return back("/readings", ok="已撤回该条抄表,相关账期已重算")
+            return go("/readings", msg=str(e))
+    return go("/readings", ok="已撤回该条抄表,相关账期已重算")
 
 
 # ---------- 缴费 ----------
@@ -759,8 +721,9 @@ def payments_page(request: Request, msg: str = "", ok: str = "", page: int = 1,
         agg = conn.execute(
             f"SELECT COUNT(*) n, COALESCE(SUM(p.amount),0) s FROM payments p {clause}",
             params).fetchone()
-        page, pages, pager = paginate(
-            agg["n"], page, f"meter_id={meter_id}&date_from={date_from}&date_to={date_to}")
+        _, page, pages, pager = page_slice(
+            None, agg["n"], page,
+            f"meter_id={meter_id}&date_from={date_from}&date_to={date_to}")
         rows = [dict(x) for x in conn.execute(
             f"SELECT p.*, m.name AS meter_name, m.meter_type FROM payments p "
             f"JOIN meters m ON p.meter_id=m.id {clause} "
@@ -776,7 +739,7 @@ def payments_page(request: Request, msg: str = "", ok: str = "", page: int = 1,
                   page=page, pages=pages, pager=pager,
                   today=date.today().isoformat(),
                   meter_id=meter_id, date_from=date_from, date_to=date_to,
-                  per_meter=per_meter, flash=flash_from(msg, ok))
+                  per_meter=per_meter, flash=flash(msg, ok))
 
 
 @app.post("/payments/add")
@@ -785,24 +748,24 @@ def payment_add(meter_id: int = Form(...), payment_date: str = Form(...),
                 amount: str = Form(...), note: str = Form("")):
     value = _float(amount)
     if value is None:
-        return back("/payments", msg="请填写账单金额")
+        return go("/payments", msg="请填写账单金额")
     with connect() as conn:
         meter = conn.execute("SELECT * FROM meters WHERE id=?", (meter_id,)).fetchone()
         if not meter or meter["level"] != "main":
-            return back("/payments", msg="缴费只能记在总表上")
+            return go("/payments", msg="缴费只能记在总表上")
         conn.execute(
             "INSERT INTO payments(meter_id,payment_date,reading_value,unit_price,amount,note) "
             "VALUES (?,?,?,?,?,?)",
             (meter_id, payment_date, _int(reading_value), _float(unit_price),
              round(value, 2), note.strip()))
-    return back("/payments", ok=f"缴费记录已保存,金额 {value:.2f} 元")
+    return go("/payments", ok=f"缴费记录已保存,金额 {value:.2f} 元")
 
 
 @app.post("/payments/delete")
 def payment_delete(id: int = Form(...)):
     with connect() as conn:
         conn.execute("DELETE FROM payments WHERE id=?", (id,))
-    return back("/payments", ok="缴费记录已删除")
+    return go("/payments", ok="缴费记录已删除")
 
 
 # ---------- 统计 ----------
@@ -847,8 +810,7 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
 
     qs = (f"type={type}&household_id={household_id}&line_id={line_id}"
           f"&date_from={date_from}&date_to={date_to}")
-    page, pages, pager = paginate(len(rows), page, qs)
-    page_rows = rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+    page_rows, page, pages, pager = page_slice(rows, len(rows), page, qs)
 
     return render("statistics.html", title="统计与查询",
                   lead="按租户、计量线、账期查询用量与费用;并对比向部门缴出与向租户收取。",

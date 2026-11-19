@@ -48,6 +48,16 @@ def h(text) -> str:
     return html.escape(str(text))
 
 
+def add_month(d: date) -> date:
+    """同日加一个月,月末溢出则截断(如 1/31 -> 2/28)。"""
+    month = d.month + 1
+    year = d.year + (month - 1) // 12
+    month = (month - 1) % 12 + 1
+    day = min(d.day, [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+                      31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1])
+    return d.replace(year=year, month=month, day=day)
+
+
 def money(value) -> str:
     return f"{(value or 0):,.2f}"
 
@@ -850,7 +860,9 @@ def payments_page(request: Request, msg: str = "", ok: str = "", page: int = 1,
                   meter_id: str = "", date_from: str = "", date_to: str = ""):
     if r := require_login(request):
         return r
-    today = date.today().isoformat()
+    today = date.today()
+    period_end_default = add_month(today).isoformat()
+    today = today.isoformat()
     with connect() as conn:
         meters = [dict(x) for x in conn.execute(
             "SELECT * FROM meters WHERE level='main' ORDER BY meter_type, id")]
@@ -894,6 +906,7 @@ def payments_page(request: Request, msg: str = "", ok: str = "", page: int = 1,
                   page=page, pages=pages, pager=pager, today=today,
                   meter_id=meter_id, date_from=date_from, date_to=date_to,
                   per_meter_stats=per_meter_stats, last_js=last_js,
+                  period_end_default=period_end_default,
                   flash=flash_from(msg, ok))
 
 

@@ -45,3 +45,9 @@ Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents
 ### UI design contract
 
 改任何 HTML/CSS/文案前先读 `DESIGN.md`(token、组件配方、措辞规则、Do's & Don'ts);新增页面照它的配方做。
+
+### 派子代理
+
+审查用 `reviewer`、实现用 `worker`、探索用 `scout`;`claude-code`/`codex-exec` 是外部 CLI profile,
+要求本机装了对应命令,不是 Pi 子代理。要审已提交的 diff,先把 `git diff` 落成文件再给它路径——
+`reviewer` 没有 shell,`watchdog_diff` 也不读提交区间。见 `pi-subagent-routing` skill。

@@ -145,13 +145,6 @@ def recompute_line(conn, line_id: int) -> None:
         conn.execute("DELETE FROM receivables WHERE line_id=?", (line_id,))
 
 
-def record_period(conn, line_id: int, end_reading_id: int) -> bool:
-    """把以某条读数收尾的账期记为应收。等价于重算整条线。"""
-    recompute_line(conn, line_id)
-    return any(p["reading_id"] == end_reading_id
-               for p in periods_for_line(conn, line_id))
-
-
 def vacancy_usage(conn, date_from: str = "", date_to: str = "") -> list[dict]:
     """空档期用量:同一块表上,两任租户之间无人使用的区间。归房东,不收费。"""
     rows = []

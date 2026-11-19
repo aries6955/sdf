@@ -33,13 +33,8 @@ def pager(total: int, page: int, base_qs: str) -> tuple[int, int, str]:
 
 
 def page_slice(rows, total: int, page: int, base_qs: str):
-    """列表页的一页:返回 (本页行, 当前页, 总页数, 分页控件 HTML)。
-
-    rows 传 None 表示只想要页码与控件(明细由调用方自己分页查询)。
-    """
+    """内存里已有全部行时的一页:返回 (本页行, 当前页, 总页数, 分页控件 HTML)。"""
     page, pages, html = pager(total, page, base_qs)
-    if rows is None:
-        return None, page, pages, html
     return rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE], page, pages, html
 
 

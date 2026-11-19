@@ -18,6 +18,7 @@ from .billing import (
 from .db import connect, get_setting, init_db, set_setting
 from .ledger import all_outstanding, household_ledger, margin, paid_to_utility, totals
 from .pages import PAGE_SIZE, flash, go, page_slice
+from .pages import pager as pager_html
 from .sample import clear_all, load_sample
 from .views import render
 
@@ -619,9 +620,9 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
         total = conn.execute(
             f"SELECT COUNT(*) FROM readings r JOIN lines l ON r.line_id=l.id {clause}",
             rparams).fetchone()[0]
-        _, page, pages, pager = page_slice(
-            None, total, page,
-            f"line_id={line_id}&household_id={household_id}&date_from={date_from}&date_to={date_to}")
+        page, pages, pager = pager_html(
+            total, page, f"line_id={line_id}&household_id={household_id}"
+                         f"&date_from={date_from}&date_to={date_to}")
         detail = conn.execute(
             f"SELECT r.*, l.household_id, l.meter_type, l.label, h.name AS household_name, "
             f"m.name AS meter_name, m.phase, m.line_id AS m_line "
@@ -632,7 +633,7 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
 
         all_readings = [dict(x) for x in detail]
         for x in all_readings:
-            x["can_edit"] = _reading_editable(conn, x)
+            x["can_edit"] = readings.editable(conn, x)
     return render("readings.html", title="抄表",
                   lead="记录各计量线的读数。抄表即当场算出该账期的应收。",
                   active="readings", lines=lines_sorted, all_lines=all_lines,
@@ -643,10 +644,6 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
                   today=today, line_id=line_id, household_id=household_id,
                   date_from=date_from, date_to=date_to, edit=edit,
                   flash=flash(msg, ok))
-
-
-def _reading_editable(conn, reading: dict) -> bool:
-    return readings.editable(conn, reading)
 
 
 @app.post("/readings/add")
@@ -721,9 +718,8 @@ def payments_page(request: Request, msg: str = "", ok: str = "", page: int = 1,
         agg = conn.execute(
             f"SELECT COUNT(*) n, COALESCE(SUM(p.amount),0) s FROM payments p {clause}",
             params).fetchone()
-        _, page, pages, pager = page_slice(
-            None, agg["n"], page,
-            f"meter_id={meter_id}&date_from={date_from}&date_to={date_to}")
+        page, pages, pager = pager_html(
+            agg["n"], page, f"meter_id={meter_id}&date_from={date_from}&date_to={date_to}")
         rows = [dict(x) for x in conn.execute(
             f"SELECT p.*, m.name AS meter_name, m.meter_type FROM payments p "
             f"JOIN meters m ON p.meter_id=m.id {clause} "

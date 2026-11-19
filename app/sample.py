@@ -96,8 +96,9 @@ def load_sample(conn) -> None:
     lines: dict[str, int] = {}
     for hh_name, move_in, seats in TAKEOVERS:
         for meter_name, value, price in seats:
-            meter = _meter(conn, ids, meter_name)
-            lines[meter_name] = _move_in_one(conn, hh[hh_name], meter, move_in, value, price)
+            tenancy.move_in(conn, household_id=hh[hh_name], start_date=move_in,
+                            seats=[(_meter(conn, ids, meter_name), _split(value), price, "")])
+            lines[meter_name] = _new_line(conn, hh[hh_name])
 
     for meter_name, d, value, price in READINGS:
         readings.insert(conn, kind="periodic", line_id=lines[meter_name],
@@ -115,11 +116,12 @@ def load_sample(conn) -> None:
                     parts=_split(35), price=5.50)
 
     # 王五 2025-04-01 退租
-    _check_out_one(conn, hh, ids, "王五", "103水表", "2025-04-01", _split(130))
-    _check_out_one(conn, hh, ids, "王五", "103电表", "2025-04-01", (405, 135, 135, 135))
+    _check_out(conn, hh["王五"], ids, [("103水表", _split(130)),
+                                       ("103电表", (405, 135, 135, 135))], "2025-04-01")
 
     # 李四 2025-04-10 入住 103 房;水表 145(空档 15 归房东),没有电表
-    _move_in_one(conn, hh["李四"], _meter(conn, ids, "103水表"), "2025-04-10", 145, 5.50)
+    tenancy.move_in(conn, household_id=hh["李四"], start_date="2025-04-10",
+                    seats=[(_meter(conn, ids, "103水表"), _split(145), 5.50, "")])
 
     for meter, d, rv, up, amount, note in PAYMENTS:
         conn.execute(
@@ -146,23 +148,23 @@ def _split(value) -> tuple:
     return value, None, None, None
 
 
-def _move_in_one(conn, hh_id, meter, move_in, value, price) -> int:
-    """示例专用:开一条租期并记入户读数,返回新计量线的编号。"""
-    from . import tenancy
-
-    tenancy.move_in(conn, household_id=hh_id, start_date=move_in,
-                    seats=[(meter, _split(value), price, "")])
+def _new_line(conn, hh_id) -> int:
+    """刚建的那条计量线:示例里每条线都是刚开的,取该租户最后一条即可。"""
     return conn.execute("SELECT id FROM lines WHERE household_id=? ORDER BY id DESC LIMIT 1",
                         (hh_id,)).fetchone()["id"]
 
 
-def _check_out_one(conn, hh, ids, hh_name, meter_name, d, parts):
+def _check_out(conn, hh_id, ids, outs, d):
+    """示例专用:一次退掉该租户的多条线。outs 为 [(表名, parts)]。"""
     from . import tenancy
 
-    meter = _meter(conn, ids, meter_name)
-    line = conn.execute("SELECT * FROM lines WHERE id=?", (meter["line_id"],)).fetchone()
-    price = conn.execute(
-        "SELECT tenant_price FROM readings WHERE line_id=? "
-        "ORDER BY reading_date DESC, id DESC LIMIT 1", (line["id"],)).fetchone()["tenant_price"]
-    tenancy.check_out(conn, household_id=hh[hh_name], out_date=d,
-                      outs=[(line, meter["id"], parts, price)])
+    seats = []
+    for meter_name, parts in outs:
+        meter = _meter(conn, ids, meter_name)
+        line = conn.execute("SELECT * FROM lines WHERE id=?", (meter["line_id"],)).fetchone()
+        price = conn.execute(
+            "SELECT tenant_price FROM readings WHERE line_id=? "
+            "ORDER BY reading_date DESC, id DESC LIMIT 1",
+            (line["id"],)).fetchone()["tenant_price"]
+        seats.append((line, meter["id"], parts, price))
+    tenancy.check_out(conn, household_id=hh_id, out_date=d, outs=seats)

@@ -13,10 +13,11 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 数据保存在项目目录的 `data.sqlite3`,由单进程独占写入。
 
-## 测试
+## 检查
 
 ```bash
-uv run pytest -q
+uv run python scripts/check.py     # ruff + pytest,提交前跑这个
+uv run pytest -q                   # 只跑测试
 ```
 
 ## 使用流程

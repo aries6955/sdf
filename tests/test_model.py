@@ -1,11 +1,21 @@
 """领域模型的核心规则:归属只来自租期、抄表即成账、账期跨表、空档期、收款冲抵。"""
 
-import sqlite3
 
 import app.db as db
-from tests.conftest import (_add, _add_meter, _basic, _checkout, _hid, _line_of, _mid,
-                            _msg, _move_in, _one, _q, _with_period)
-
+from tests.conftest import (
+    _add,
+    _add_meter,
+    _basic,
+    _checkout,
+    _hid,
+    _line_of,
+    _mid,
+    _move_in,
+    _msg,
+    _one,
+    _q,
+    _with_period,
+)
 
 # ---------- 归属 ----------
 

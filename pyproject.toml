@@ -18,3 +18,18 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F: pycodestyle+pyflakes 基线;I: 导入顺序;RUF: ruff 自身规则集;SIM: 可简化写法
+select = ["E", "F", "I", "W", "RUF", "SIM"]
+ignore = [
+  "E501",    # 行长:中文注释与文案天然偏长,交给编辑器折行
+  "RUF001", "RUF002", "RUF003",  # 全角标点在中文文案里是刻意的
+  "RUF005",  # 列表拼接在 [line_id, *keep] 处更直白
+  "RUF007",  # zip(a, a[1:]) 比 itertools.pairwise 更贴合"相邻两行"的读法
+  "RUF013",  # FastAPI 的 `x: str = None` 形态由框架注入,不是真的 Optional
+]

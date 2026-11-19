@@ -2,9 +2,10 @@
 
 ## 操作纪律
 
-### 完成标准:测试全过
+### 完成标准:检查全过
 
-改完任何代码后运行 `uv run pytest -q`,全部通过才算完成;有失败先修复再报告。
+改完任何代码后运行 `uv run python scripts/check.py`(ruff 静态检查 + pytest),全部通过才算完成;
+有失败先修复再报告。只跑 `uv run pytest -q` 会漏掉未使用的 import、死变量与行内多语句。
 
 ### 改完代码必须重启服务
 
@@ -36,6 +37,10 @@ Five canonical roles, label strings equal to role names: `needs-triage`, `needs-
 ### Domain docs
 
 Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+改计费或账务逻辑前,**先读 `GLOSSARY.md`**,再读相关的 `docs/adr/`:
+模型的两条硬约束是「归属只来自租期」(`ADR-0012`)与「账期沿计量线连续、换表不切断」(`ADR-0014`),
+绕开它们就会重新引入双份归属或账单被拆成两张的那类缺陷。
 
 ### UI design contract
 

@@ -3,10 +3,8 @@
 绝不按进程名杀 msedge.exe —— 那会连用户正在用的浏览器一起关掉。
 """
 
-import os
 import subprocess
 import tempfile
-import time
 from pathlib import Path
 
 EDGE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"

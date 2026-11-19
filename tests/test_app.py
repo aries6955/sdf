@@ -1,15 +1,23 @@
 """页面、鉴权、示例数据与导出。"""
 
-import sqlite3
-
 import app.db as db
-from tests.conftest import (_add, _add_meter, _basic, _hid, _mid, _move_in, _one, _q,
-                            _with_period)
+from tests.conftest import (
+    _add,
+    _add_meter,
+    _basic,
+    _hid,
+    _mid,
+    _move_in,
+    _one,
+    _q,
+    _with_period,
+)
 
 
 def test_requires_login():
     """未登录访问任何页面都跳登录页。"""
     from fastapi.testclient import TestClient
+
     from app.main import app
     with TestClient(app) as c:
         for path in ("/", "/readings", "/households", "/meters", "/payments",
@@ -21,8 +29,8 @@ def test_requires_login():
 def test_all_mutations_require_login():
     """提交动作也要登录:未登录的 POST 不能改动任何数据。"""
     from fastapi.testclient import TestClient
+
     from app.main import app
-    import app.db as _db
     with TestClient(app) as c:
         for path in ("/init/clear", "/households/add", "/meters/add", "/readings/add",
                      "/receipts/add", "/payments/add", "/switches/add"):
@@ -87,8 +95,6 @@ def test_sample_data_arithmetic(client):
     rows = _q("select * from receivables order by id")
     assert len(rows) >= 8, "示例应产生多条账期"
     assert all(r["amount"] == round(r["usage_amount"] * r["unit_price"], 2) for r in rows)
-    # 换表那条账期跨越两块表
-    multis = [r for r in rows if r["usage_amount"] == 92]     # (280-232)+(32-0)? 见下
     lines = _q("select * from lines where move_out_date is not null")
     assert lines, "示例包含退租"
 
@@ -137,7 +143,6 @@ def test_clear_resets_autoincrement(client):
 # ---------- 密码与初始化 ----------
 
 def test_bad_password_rejected(client):
-    from tests.conftest import TEST_PASSWORD
     from urllib.parse import unquote
     r = client.post("/login", data={"password": "wrong"}, follow_redirects=False)
     assert "密码不正确" in unquote(r.headers["location"])

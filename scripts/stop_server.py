@@ -3,6 +3,7 @@
 避免 taskkill /IM uvicorn.exe 这种模糊匹配误杀别的项目。
 """
 
+import contextlib
 import subprocess
 import sys
 
@@ -26,10 +27,8 @@ def pids_on_port(port: int) -> set[int]:
         if len(parts) >= 5 and parts[0].upper() == "TCP":
             local, state, pid = parts[1], parts[3].upper(), parts[4]
             if local.endswith(f":{port}") and state == "LISTENING":
-                try:
+                with contextlib.suppress(ValueError):
                     pids.add(int(pid))
-                except ValueError:
-                    pass
     return pids
 
 
@@ -42,10 +41,8 @@ def child_pids(parent: int) -> set[int]:
     ])
     result = set()
     for token in out.split():
-        try:
+        with contextlib.suppress(ValueError):
             result.add(int(token))
-        except ValueError:
-            pass
     return result
 
 

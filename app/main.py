@@ -1,20 +1,27 @@
 import os
 import secrets
 from contextlib import asynccontextmanager
-from pathlib import Path
 from datetime import date, datetime
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .billing import (all_periods, get_line, line_readings, open_lines, record_period,
-                      recompute_line, vacancy_usage)
-from .ledger import household_ledger, all_outstanding, totals, touched_by_reading
-from .views import render
+from .billing import (
+    all_periods,
+    get_line,
+    line_readings,
+    open_lines,
+    recompute_line,
+    record_period,
+    vacancy_usage,
+)
 from .db import connect, get_setting, init_db, set_setting
+from .ledger import all_outstanding, household_ledger, totals, touched_by_reading
 from .sample import clear_all, load_sample
+from .views import render
 
 
 @asynccontextmanager
@@ -745,13 +752,17 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
         # 读数记录(明细),按日期倒序
         rwhere, rparams = ["r.kind <> 'switch_base'"], []
         if household_id:
-            rwhere.append("l.household_id = ?"); rparams.append(_int(household_id))
+            rwhere.append("l.household_id = ?")
+            rparams.append(_int(household_id))
         if line_id:
-            rwhere.append("r.line_id = ?"); rparams.append(_int(line_id))
+            rwhere.append("r.line_id = ?")
+            rparams.append(_int(line_id))
         if date_from:
-            rwhere.append("r.reading_date >= ?"); rparams.append(date_from)
+            rwhere.append("r.reading_date >= ?")
+            rparams.append(date_from)
         if date_to:
-            rwhere.append("r.reading_date <= ?"); rparams.append(date_to)
+            rwhere.append("r.reading_date <= ?")
+            rparams.append(date_to)
         clause = "WHERE " + " AND ".join(rwhere)
         total = conn.execute(
             f"SELECT COUNT(*) FROM readings r JOIN lines l ON r.line_id=l.id {clause}",
@@ -791,9 +802,7 @@ def _reading_editable(conn, reading: dict) -> bool:
         return False
     if touched_by_reading(conn, line["household_id"], reading["reading_date"], inserting=False):
         return False
-    if line["move_out_date"]:
-        return False
-    return True
+    return not line["move_out_date"]
 
 
 @app.post("/readings/add")
@@ -921,14 +930,14 @@ async def reading_edit(request: Request):
             "SELECT * FROM readings WHERE line_id=? AND (reading_date > ? OR "
             "(reading_date = ? AND id > ?)) ORDER BY reading_date, id LIMIT 1",
             (row["line_id"], row["reading_date"], row["reading_date"], rid)).fetchone()
-        if prev and prev["meter_id"] == row["meter_id"]:
-            if value < prev["value"] or reading_date <= prev["reading_date"]:
-                return back("/readings", msg=f"读数需不小于上一条 {prev['value']},"
-                                            f"日期需晚于 {prev['reading_date']}")
-        if nxt and nxt["meter_id"] == row["meter_id"]:
-            if value > nxt["value"] or reading_date >= nxt["reading_date"]:
-                return back("/readings", msg=f"读数不能大于下一条 {nxt['value']},"
-                                            f"日期需早于 {nxt['reading_date']}")
+        if prev and prev["meter_id"] == row["meter_id"] and (
+                value < prev["value"] or reading_date <= prev["reading_date"]):
+            return back("/readings", msg=f"读数需不小于上一条 {prev['value']},"
+                                        f"日期需晚于 {prev['reading_date']}")
+        if nxt and nxt["meter_id"] == row["meter_id"] and (
+                value > nxt["value"] or reading_date >= nxt["reading_date"]):
+            return back("/readings", msg=f"读数不能大于下一条 {nxt['value']},"
+                                        f"日期需早于 {nxt['reading_date']}")
         conn.execute(
             "UPDATE readings SET reading_date=?, value=?, tenant_price=?, r1=?, r2=?, r3=? "
             "WHERE id=?", (reading_date, value, price, r1, r2, r3, rid))
@@ -972,11 +981,14 @@ def payments_page(request: Request, msg: str = "", ok: str = "", page: int = 1,
             "ORDER BY meter_type, id")]
         where, params = [], []
         if meter_id:
-            where.append("p.meter_id = ?"); params.append(_int(meter_id))
+            where.append("p.meter_id = ?")
+            params.append(_int(meter_id))
         if date_from:
-            where.append("p.payment_date >= ?"); params.append(date_from)
+            where.append("p.payment_date >= ?")
+            params.append(date_from)
         if date_to:
-            where.append("p.payment_date <= ?"); params.append(date_to)
+            where.append("p.payment_date <= ?")
+            params.append(date_to)
         clause = ("WHERE " + " AND ".join(where)) if where else ""
         agg = conn.execute(
             f"SELECT COUNT(*) n, COALESCE(SUM(p.amount),0) s FROM payments p {clause}",

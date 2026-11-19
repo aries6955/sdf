@@ -8,8 +8,8 @@ from .billing import line_readings
 from .readings import ReadingRejected, insert
 
 
-def move_in(conn, *, household_id: int, start_date: str, seats) -> int:
-    """入住:每条座位(meter, parts, price, label)开一条计量线并记入户读数。"""
+def move_in(conn, *, household_id: int, start_date: str, seats) -> list[int]:
+    """入住:每条座位(meter, parts, price, label)开一条计量线并记入户读数。返回新建的线号。"""
     for meter, parts, _price, _label in seats:
         if meter["level"] != "sub":
             raise ReadingRejected(f"「{meter['name']}」是总表,不能分配给租户")
@@ -24,6 +24,7 @@ def move_in(conn, *, household_id: int, start_date: str, seats) -> int:
             raise ReadingRejected(
                 f"「{meter['name']}」的读数 {parts[0]} 小于该表上次读数 {last['value']},请核对")
 
+    created = []
     for meter, parts, price, label in seats:
         line = conn.execute(
             "INSERT INTO lines(household_id,meter_type,label,move_in_date,move_in_value,note)"
@@ -33,10 +34,11 @@ def move_in(conn, *, household_id: int, start_date: str, seats) -> int:
         insert(conn, kind="move_in", line_id=line, meter_id=meter["id"],
                reading_date=start_date, parts=parts, price=price,
                note=f"{meter['name']} 入住读数")
-    return len(seats)
+        created.append(line)
+    return created
 
 
-def check_out(conn, *, household_id: int, out_date: str, outs) -> None:
+def check_out(conn, *, out_date: str, outs) -> None:
     """退租:每条开放线记终点读数、当场结清该租期,然后关线并腾出表。
 
     outs: [(line, meter_id, parts, price)]。结算只要求算清差额,不要求尾款已收。

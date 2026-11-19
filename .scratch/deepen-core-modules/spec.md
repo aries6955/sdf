@@ -100,3 +100,14 @@
 - 新增决定见 `docs/adr/0024-readings-are-written-through-one-module.md`;
   读数条目已在 `GLOSSARY.md` 补上边界读数与换表内部读数的区分。
 - 落地顺序:按票号,`01` 是纯删除、`07` 是纯搬移;`05` 是途中发现的真 bug,可随时插入。
+
+## 双轴审查结论(2026-11-19)
+
+Standards 轴与 Spec 轴各由独立子代理完成,结论均为 OK with notes,无 P0。已按 findings 修正:
+
+- **Spec 轴 (c) 真回归**:毛差原应跟随租户与计量线筛选,重构后却按全量相减。改为 `margin_from(应收, 缴出)`,
+  两者都取同一组筛选值;`tenant_due` 补 `household_id`。新增断言覆盖按租户筛选的情形。
+- **Standards 轴**:`tenancy.check_out` 的无用形参 `household_id` 删除;`tenancy.move_in` 改为返回新建的线号,
+  示例数据不再用"取该租户最后一条线"来猜。
+- 未采纳:把 `_int`/`_float`、"最后一条读数"SQL 各自收敛为一处 —— 前者是两行纯函数、后者各处查询条件与用途不同,
+  合并会把无关的读取耦合起来。`tenancy.meter()` 保留,它是换表路由读表的入口。

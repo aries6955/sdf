@@ -16,7 +16,14 @@ from .billing import (
     vacancy_usage,
 )
 from .db import connect, get_setting, init_db, set_setting
-from .ledger import all_outstanding, household_ledger, margin, paid_to_utility, totals
+from .ledger import (
+    all_outstanding,
+    household_ledger,
+    margin_from,
+    paid_for,
+    paid_to_utility,
+    totals,
+)
 from .pages import PAGE_SIZE, flash, go, page_slice
 from .pages import pager as pager_html
 from .sample import clear_all, load_sample
@@ -430,7 +437,7 @@ async def household_checkout(request: Request):
             pending.append((line, meter["id"], parts, last["tenant_price"]))
 
         try:
-            tenancy.check_out(conn, household_id=hh_id, out_date=out_date, outs=pending)
+            tenancy.check_out(conn, out_date=out_date, outs=pending)
         except readings.ReadingRejected as e:
             return go(f"/households/{hh_id}/ledger", msg=str(e))
     return go(f"/households/{hh_id}/ledger", ok="已退租,本租期账单已结算并关闭")
@@ -793,15 +800,14 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
             "FROM lines l JOIN households h ON h.id=l.household_id "
             "LEFT JOIN meters m ON m.line_id=l.id ORDER BY l.id")]
         paid_by_type = paid_to_utility(conn, date_from, date_to)
-        paid_total = (paid_by_type["water"] + paid_by_type["electricity"]
-                      if type == "all" else paid_by_type[type])
-        # 毛差只在一处定义:向租户应收减向部门缴出
-        margin_value = margin(conn, None if type == "all" else type, date_from, date_to)
+        paid_total = paid_for(conn, None if type == "all" else type, date_from, date_to)
         gaps = vacancy_usage(conn, date_from, date_to)
 
     total_water = sum(x["usage"] for x in rows if x["meter_type"] == "water")
     total_elec = sum(x["usage"] for x in rows if x["meter_type"] == "electricity")
     total_amount = round(sum(x["amount"] for x in rows), 2)
+    # 应收与缴出取自同一组筛选条件(租户、计量线、账期区间),毛差才恒等
+    margin_value = margin_from(total_amount, paid_total)
     gap_usage = sum(g["usage"] for g in gaps)
 
     qs = (f"type={type}&household_id={household_id}&line_id={line_id}"

@@ -140,12 +140,12 @@ def all_outstanding(conn) -> list[dict]:
     return result
 
 
-def tenant_due(conn, meter_type: str = None, date_from: str = "",
-               date_to: str = "") -> float:
+def tenant_due(conn, meter_type: str = None, household_id: int = None,
+               date_from: str = "", date_to: str = "") -> float:
     """向租户应收:账期金额之和。这是房东向租户开出的钱。"""
     from .billing import all_periods
     return round(sum(p["amount"] for p in all_periods(
-        conn, meter_type, date_from=date_from, date_to=date_to)), 2)
+        conn, meter_type, household_id, date_from, date_to)), 2)
 
 
 def paid_to_utility(conn, date_from: str = "", date_to: str = "") -> dict:
@@ -159,12 +159,16 @@ def paid_to_utility(conn, date_from: str = "", date_to: str = "") -> dict:
     return out
 
 
-def margin(conn, meter_type: str = None, date_from: str = "",
-           date_to: str = "") -> float:
-    """毛差:向租户应收减向部门缴出。只看水就只减水费,只看电就只减电费。"""
+def paid_for(conn, meter_type: str = None, date_from: str = "",
+             date_to: str = "") -> float:
+    """向部门缴出中与统计口径对应的那一份:只看水就只取水费,只看电就只取电费。"""
     paid = paid_to_utility(conn, date_from, date_to)
-    out = paid["water"] + paid["electricity"] if meter_type is None else paid[meter_type]
-    return round(tenant_due(conn, meter_type, date_from, date_to) - out, 2)
+    return paid["water"] + paid["electricity"] if meter_type is None else paid[meter_type]
+
+
+def margin_from(due: float, paid: float) -> float:
+    """毛差:向租户应收减向部门缴出。两个数必须取自同一组筛选条件。"""
+    return round(due - paid, 2)
 
 
 def totals(conn, meter_type: str = None) -> dict:

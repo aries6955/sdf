@@ -9,17 +9,15 @@ from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from . import readings
 from .billing import (
     all_periods,
-    get_line,
     line_readings,
     open_lines,
-    recompute_line,
-    record_period,
     vacancy_usage,
 )
 from .db import connect, get_setting, init_db, set_setting
-from .ledger import all_outstanding, household_ledger, totals, touched_by_reading
+from .ledger import all_outstanding, household_ledger, totals
 from .sample import clear_all, load_sample
 from .views import render
 
@@ -412,42 +410,33 @@ async def household_add(request: Request):
             last = conn.execute(
                 "SELECT value, tenant_price FROM readings WHERE meter_id=? "
                 "ORDER BY reading_date DESC, id DESC LIMIT 1", (mid,)).fetchone()
-            if meter["phase"] == "three":
-                parts = [_int(form.get(f"base_{mid}_{i}", "")) for i in (1, 2, 3)]
-                if any(p is None or p < 0 for p in parts):
-                    return back("/households", msg=f"三相表「{meter['name']}」需分别填写三个读数")
-                start_val = sum(parts)
-                r1, r2, r3 = parts
-            else:
-                raw = _int(form.get(f"base_{mid}", ""))
-                if raw is not None and raw < 0:
-                    return back("/households", msg=f"「{meter['name']}」读数不能为负")
-                start_val = raw
-                r1 = r2 = r3 = None
-            if start_val is None:
-                return back("/households", msg=f"表「{meter['name']}」需要填写入住读数")
-            if last and start_val < last["value"]:
+            try:
+                parts = readings.parts_of(
+                    form, meter, (f"base_{mid}", f"base_{mid}_1", f"base_{mid}_2",
+                                  f"base_{mid}_3"))
+            except readings.ReadingRejected:
                 return back("/households",
-                            msg=f"「{meter['name']}」的读数 {start_val} 小于该表上次读数 {last['value']},请核对")
+                            msg=f"表「{meter['name']}」需要填写入住读数")
+            if last and parts[0] < last["value"]:
+                return back("/households",
+                            msg=f"「{meter['name']}」的读数 {parts[0]} 小于该表上次读数 {last['value']},请核对")
             price = _float(form.get(f"price_{mid}", ""), None)
             if price is None:
                 price = last["tenant_price"] if last else 0.0
             label = str(form.get(f"label_{mid}", "")).strip()
-            seats.append((meter, start_val, price, r1, r2, r3, label))
+            seats.append((meter, parts, price, label))
 
         cur = conn.execute("INSERT INTO households(name,note) VALUES (?,?)", (name, note))
         hh_id = cur.lastrowid
-        for meter, start_val, price, r1, r2, r3, label in seats:
+        for meter, parts, price, label in seats:
             line = conn.execute(
                 "INSERT INTO lines(household_id,meter_type,label,move_in_date,move_in_value,note)"
                 " VALUES (?,?,?,?,?,?)",
-                (hh_id, meter["meter_type"], label, start_date, start_val, "")).lastrowid
+                (hh_id, meter["meter_type"], label, start_date, parts[0], "")).lastrowid
             conn.execute("UPDATE meters SET line_id=? WHERE id=?", (line, meter["id"]))
-            conn.execute(
-                "INSERT INTO readings(line_id,meter_id,reading_date,value,r1,r2,r3,"
-                "tenant_price,kind,note) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (line, meter["id"], start_date, start_val, r1, r2, r3, price, "move_in",
-                 f"{name} 入住读数"))
+            readings.insert(conn, kind="move_in", line_id=line, meter_id=meter["id"],
+                            reading_date=start_date, parts=parts, price=price,
+                            note=f"{name} 入住读数")
     return back("/households", ok=f"已为「{name}」办理入住,共 {len(seats)} 条计量线")
 
 
@@ -505,23 +494,16 @@ async def household_checkout(request: Request):
             if value < last["value"]:
                 return back(f"/households/{hh_id}/ledger",
                             msg=f"退租读数 {value} 小于上次读数 {last['value']},请核对")
-            pending.append((line, value, r1, r2, r3, last["tenant_price"]))
+            pending.append((line, meter["id"], value, r1, r2, r3, last["tenant_price"]))
 
-        for line, value, r1, r2, r3, price in pending:
-            lid = line["id"]
-            meter = conn.execute("SELECT * FROM meters WHERE line_id=?", (lid,)).fetchone()
-            conn.execute(
-                "INSERT INTO readings(line_id,meter_id,reading_date,value,r1,r2,r3,"
-                "tenant_price,kind,note) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (lid, meter["id"], out_date, value, r1, r2, r3, price, "move_out", "退租读数"))
-            tail = conn.execute(
-                "SELECT * FROM readings WHERE line_id=? ORDER BY reading_date DESC, id DESC LIMIT 1",
-                (lid,)).fetchone()
-            record_period(conn, lid, tail["id"])
+        for line, meter_id, value, r1, r2, r3, price in pending:
+            readings.insert(conn, kind="move_out", line_id=line["id"], meter_id=meter_id,
+                            reading_date=out_date, parts=(value, r1, r2, r3), price=price,
+                            note="退租读数")
             conn.execute(
                 "UPDATE lines SET move_out_date=?, move_out_value=? WHERE id=?",
-                (out_date, value, lid))
-            conn.execute("UPDATE meters SET line_id=NULL WHERE line_id=?", (lid,))
+                (out_date, value, line["id"]))
+            conn.execute("UPDATE meters SET line_id=NULL WHERE line_id=?", (line["id"],))
     return back(f"/households/{hh_id}/ledger", ok="已退租,本租期账单已结算并关闭")
 
 
@@ -616,15 +598,11 @@ async def switch_add(request: Request):
         return back("/meters", msg="请填写换表日期")
 
     def _read(prefix, meter, label):
-        if meter["phase"] == "three":
-            parts = [_int(form.get(f"{prefix}_{i}", "")) for i in (1, 2, 3)]
-            if any(p is None or p < 0 for p in parts):
-                return None, None, f"{label}:三相电表需分别填写三个读数"
-            return sum(parts), parts, None
-        value = _int(form.get(prefix, ""))
-        if value is None or value < 0:
-            return None, None, f"{label}:请填写读数"
-        return value, None, None
+        try:
+            return readings.parts_of(form, meter,
+                                     (prefix, f"{prefix}_1", f"{prefix}_2", f"{prefix}_3")), None
+        except readings.ReadingRejected:
+            return None, f"{label}:三相电表需分别填写三个读数"
 
     with connect() as conn:
         old_m = conn.execute("SELECT * FROM meters WHERE id=?", (old_id,)).fetchone()
@@ -638,12 +616,13 @@ async def switch_add(request: Request):
 
         if old_m["level"] == "main":
             # 换总表:分表改接到新总表,账期不受影响(总表不参与计费)
-            old_total, old_parts, err = _read("old_final_value", old_m, "旧表终读数")
+            old_parts, err = _read("old_final_value", old_m, "旧表终读数")
             if err:
                 return back("/meters", msg=err)
-            new_total, new_parts, err = _read("new_base_value", new_m, "新表基数")
+            new_parts, err = _read("new_base_value", new_m, "新表基数")
             if err:
                 return back("/meters", msg=err)
+            old_total, new_total = old_parts[0], new_parts[0]
             conn.execute("UPDATE meters SET main_meter_id=? WHERE main_meter_id=?",
                          (new_id, old_id))
             conn.execute("UPDATE meters SET retired_on=? WHERE id=?", (switch_date, old_id))
@@ -659,12 +638,13 @@ async def switch_add(request: Request):
             (old_m["line_id"],)).fetchone() if old_m["line_id"] else None
         if not line:
             return back("/meters", msg="旧表当前没有租户在用,直接把它换下即可不留账期")
-        old_total, old_parts, err = _read("old_final_value", old_m, "旧表终读数")
+        old_parts, err = _read("old_final_value", old_m, "旧表终读数")
         if err:
             return back("/meters", msg=err)
-        new_total, new_parts, err = _read("new_base_value", new_m, "新表基数")
+        new_parts, err = _read("new_base_value", new_m, "新表基数")
         if err:
             return back("/meters", msg=err)
+        old_total, new_total = old_parts[0], new_parts[0]
         rows = line_readings(conn, line["id"])
         last = rows[-1] if rows else None
         if last:
@@ -676,23 +656,12 @@ async def switch_add(request: Request):
             return back("/meters", msg="新表已在某条计量线上使用")
 
         price = last["tenant_price"] if last else 0.0
-        _legacy = old_m["phase"]
-        conn.execute(
-            "INSERT INTO readings(line_id,meter_id,reading_date,value,r1,r2,r3,tenant_price,"
-            "kind,note) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (line["id"], old_id, switch_date, old_total,
-             old_parts[0] if old_parts else None,
-             old_parts[1] if old_parts else None,
-             old_parts[2] if old_parts else None,
-             price, "switch_out", "旧表终读数"))
-        conn.execute(
-            "INSERT INTO readings(line_id,meter_id,reading_date,value,r1,r2,r3,tenant_price,"
-            "kind,note) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (line["id"], new_id, switch_date, new_total,
-             new_parts[0] if new_parts else None,
-             new_parts[1] if new_parts else None,
-             new_parts[2] if new_parts else None,
-             price, "switch_base", "新表基数"))
+        readings.insert(conn, kind="switch_out", line_id=line["id"], meter_id=old_id,
+                        reading_date=switch_date, parts=old_parts,
+                        price=price, note="旧表终读数")
+        readings.insert(conn, kind="switch_base", line_id=line["id"], meter_id=new_id,
+                        reading_date=switch_date, parts=new_parts,
+                        price=price, note="新表基数")
         conn.execute("UPDATE meters SET line_id=NULL, retired_on=? WHERE id=?",
                      (switch_date, old_id))
         conn.execute("UPDATE meters SET line_id=? WHERE id=?", (line["id"], new_id))
@@ -794,15 +763,7 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
 
 
 def _reading_editable(conn, reading: dict) -> bool:
-    """读数可改的条件:不是入户读数、且它此后没有已收到的钱。"""
-    if reading["kind"] == "move_in":
-        return False
-    line = get_line(conn, reading["line_id"])
-    if line is None:
-        return False
-    if touched_by_reading(conn, line["household_id"], reading["reading_date"], inserting=False):
-        return False
-    return not line["move_out_date"]
+    return readings.editable(conn, reading)
 
 
 @app.post("/readings/add")
@@ -816,68 +777,14 @@ async def reading_add(request: Request):
     if not line_id or not reading_date:
         return back("/readings", msg="请选择计量线与抄表日期")
     with connect() as conn:
-        line = conn.execute(
-            "SELECT l.*, h.name AS household_name FROM lines l JOIN households h ON h.id=l.household_id "
-            "WHERE l.id=?", (line_id,)).fetchone()
-        if not line:
-            return back("/readings", msg="计量线不存在")
-        if line["move_out_date"]:
-            return back("/readings", msg="该租期已结束,不能再抄表")
-        meter = conn.execute("SELECT * FROM meters WHERE id=?", (meter_id,)).fetchone()
-        if not meter or meter["line_id"] != line_id:
-            return back("/readings", msg="这块表不在该计量线上,请刷新页面重选")
-        if meter["phase"] == "three":
-            parts = [_int(form.get(f"value_{i}", "")) for i in (1, 2, 3)]
-            if any(p is None or p < 0 for p in parts):
-                return back("/readings", msg="三相电表需要分别填写三个读数")
-            value, r1, r2, r3 = sum(parts), parts[0], parts[1], parts[2]
-        else:
-            value = _int(form.get("value", ""))
-            if value is None or value < 0:
-                return back("/readings", msg="请填写本次读数")
-            r1 = r2 = r3 = None
-        # 与前后相邻读数比较,因此可以补录到中间(ADR-0021)
-        prev = conn.execute(
-            "SELECT * FROM readings WHERE line_id=? AND (reading_date < ? OR "
-            "(reading_date = ? AND ? = 0)) ORDER BY reading_date DESC, id DESC LIMIT 1",
-            (line_id, reading_date, reading_date, 0)).fetchone()
-        nxt = conn.execute(
-            "SELECT * FROM readings WHERE line_id=? AND reading_date > ? "
-            "ORDER BY reading_date, id LIMIT 1", (line_id, reading_date)).fetchone()
-        if prev is None:
-            prev = conn.execute(
-                "SELECT * FROM readings WHERE line_id=? ORDER BY reading_date, id LIMIT 1",
-                (line_id,)).fetchone()
-        if prev is not None and prev["reading_date"] >= reading_date:
-            return back("/readings", msg=f"抄表日期需晚于前一条读数 {prev['reading_date']}")
-        if nxt is not None and nxt["reading_date"] <= reading_date:
-            return back("/readings", msg=f"抄表日期需早于后一条读数 {nxt['reading_date']}")
-        if prev is not None and prev["meter_id"] == meter_id:
-            if value < prev["value"]:
-                return back("/readings",
-                            msg=f"本次读数 {value} 小于前一条读数 {prev['value']},请核对")
-            if (meter["phase"] == "three" and prev["r1"] is not None
-                    and (r1 < prev["r1"] or r2 < prev["r2"] or r3 < prev["r3"])):
-                return back("/readings", msg="某一相读数小于前一条,请核对")
-        if nxt is not None and nxt["meter_id"] == meter_id and value > nxt["value"]:
-            return back("/readings", msg=f"本次读数 {value} 大于后一条读数 {nxt['value']},请核对")
-        if prev is None and value < line["move_in_value"]:
-            return back("/readings", msg=f"读数不得小于入住读数 {line['move_in_value']}")
-        # 插进一个已收款的账期会把它一分为二并重排冲抵,因此禁止(ADR-0015/0021)
-        hit = touched_by_reading(conn, line["household_id"], reading_date, inserting=True)
-        if hit:
-            return back("/readings",
-                        msg=f"{hit['start']} ~ {hit['end']} 这一期已收款,不能在其区间内补录。"
-                            "请先删除对应收款。")
-        price = _float(form.get("tenant_price", ""), None)
-        if price is None:
-            base_price = nxt or prev
-            price = base_price["tenant_price"] if base_price else 0.0
-        conn.execute(
-            "INSERT INTO readings(line_id,meter_id,reading_date,value,r1,r2,r3,tenant_price,"
-            "kind,note) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (line_id, meter_id, reading_date, value, r1, r2, r3, price, "periodic", note))
-        recompute_line(conn, line_id)
+        try:
+            meter = readings.meter_on_line(conn, line_id, meter_id)
+            parts = readings.parts_of(form, meter)
+            price = _float(form.get("tenant_price", ""), None)
+            readings.insert(conn, kind="periodic", line_id=line_id, meter_id=meter_id,
+                            reading_date=reading_date, parts=parts, price=price, note=note)
+        except readings.ReadingRejected as e:
+            return back("/readings", msg=str(e))
         p = conn.execute("SELECT * FROM receivables WHERE line_id=? AND period_end=?",
                          (line_id, reading_date)).fetchone()
     amount = p["amount"] if p else 0
@@ -890,58 +797,10 @@ async def reading_edit(request: Request):
     form = await request.form()
     rid = _int(form.get("id"))
     with connect() as conn:
-        row = conn.execute("SELECT * FROM readings WHERE id=?", (rid,)).fetchone()
-        if not row:
-            return back("/readings", msg="找不到这条读数")
-        if row["kind"] == "move_in":
-            return back("/readings", msg="入户读数是租期起点,不能修改;要改请退租后重新入住")
-        if row["kind"] in ("switch_out", "switch_base"):
-            return back("/readings", msg="换表读数是换表登记的一部分,不能在此修改")
-        line = get_line(conn, row["line_id"])
-        if line is None:
-            return back("/readings", msg="计量线不存在")
-        if line["move_out_date"]:
-            return back("/readings", msg="该租期已结束,读数锁定")
-        hit = touched_by_reading(conn, line["household_id"], row["reading_date"], inserting=False)
-        if hit:
-            return back("/readings",
-                        msg=f"{hit['start']} ~ {hit['end']} 这一期已收款,不能改读数。"
-                            "请先删除对应收款。")
-        meter = conn.execute("SELECT * FROM meters WHERE id=?", (row["meter_id"],)).fetchone()
-        reading_date = str(form.get("reading_date", "")).strip() or row["reading_date"]
-        if meter["phase"] == "three":
-            parts = [_int(form.get(f"value_{i}", "")) for i in (1, 2, 3)]
-            if any(p is None or p < 0 for p in parts):
-                return back("/readings", msg="三相电表需要分别填写三个读数")
-            value, r1, r2, r3 = sum(parts), parts[0], parts[1], parts[2]
-        else:
-            value = _int(form.get("value", ""))
-            if value is None or value < 0:
-                return back("/readings", msg="请填写读数")
-            r1 = r2 = r3 = None
-        price = _float(form.get("tenant_price", ""), None)
-        if price is None:
-            price = row["tenant_price"]
-        prev = conn.execute(
-            "SELECT * FROM readings WHERE line_id=? AND (reading_date < ? OR "
-            "(reading_date = ? AND id < ?)) ORDER BY reading_date DESC, id DESC LIMIT 1",
-            (row["line_id"], row["reading_date"], row["reading_date"], rid)).fetchone()
-        nxt = conn.execute(
-            "SELECT * FROM readings WHERE line_id=? AND (reading_date > ? OR "
-            "(reading_date = ? AND id > ?)) ORDER BY reading_date, id LIMIT 1",
-            (row["line_id"], row["reading_date"], row["reading_date"], rid)).fetchone()
-        if prev and prev["meter_id"] == row["meter_id"] and (
-                value < prev["value"] or reading_date <= prev["reading_date"]):
-            return back("/readings", msg=f"读数需不小于上一条 {prev['value']},"
-                                        f"日期需晚于 {prev['reading_date']}")
-        if nxt and nxt["meter_id"] == row["meter_id"] and (
-                value > nxt["value"] or reading_date >= nxt["reading_date"]):
-            return back("/readings", msg=f"读数不能大于下一条 {nxt['value']},"
-                                        f"日期需早于 {nxt['reading_date']}")
-        conn.execute(
-            "UPDATE readings SET reading_date=?, value=?, tenant_price=?, r1=?, r2=?, r3=? "
-            "WHERE id=?", (reading_date, value, price, r1, r2, r3, rid))
-        recompute_line(conn, row["line_id"])
+        try:
+            readings.change(conn, rid, form)
+        except readings.ReadingRejected as e:
+            return back("/readings", msg=str(e))
     return back("/readings", ok="读数已更新,相关账期已重算")
 
 
@@ -949,24 +808,10 @@ async def reading_edit(request: Request):
 def reading_delete(id: int = Form(...)):
     """撤回读数:未收款的才能撤。撤后前后两期重算,孤立的应收一并清掉。"""
     with connect() as conn:
-        row = conn.execute("SELECT * FROM readings WHERE id=?", (id,)).fetchone()
-        if not row:
-            return back("/readings", msg="记录不存在")
-        if row["kind"] != "periodic":
-            return back("/readings", msg="只有常规抄表的读数可以撤回")
-        line = get_line(conn, row["line_id"])
-        if line is None:
-            return back("/readings", msg="计量线不存在")
-        hit = touched_by_reading(conn, line["household_id"], row["reading_date"], inserting=False)
-        if hit:
-            return back("/readings",
-                        msg=f"{hit['start']} ~ {hit['end']} 这一期已收款,不能撤回。"
-                            "请先删除对应收款。")
-        if conn.execute("SELECT 1 FROM lines WHERE move_out_date IS NOT NULL AND id=?",
-                        (row["line_id"],)).fetchone():
-            return back("/readings", msg="该租期已结束,读数锁定")
-        conn.execute("DELETE FROM readings WHERE id=?", (id,))
-        recompute_line(conn, row["line_id"])
+        try:
+            readings.retract(conn, id)
+        except readings.ReadingRejected as e:
+            return back("/readings", msg=str(e))
     return back("/readings", ok="已撤回该条抄表,相关账期已重算")
 
 

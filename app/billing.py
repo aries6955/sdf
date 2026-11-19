@@ -51,45 +51,24 @@ def segment_usage(rows, start_row, end_row) -> int:
     return usage
 
 
+def _period(rows, prev, cur) -> dict:
+    usage = segment_usage(rows, prev, cur)
+    return {
+        "line_id": cur["line_id"],
+        "reading_id": cur["id"],
+        "start": prev["reading_date"],
+        "end": cur["reading_date"],
+        "usage": usage,
+        "unit_price": cur["tenant_price"],
+        "amount": round(usage * cur["tenant_price"], 2),
+    }
+
+
 def periods_for_line(conn, line_id: int) -> list[dict]:
     """一条线的全部账期。账期只由边界读数(move_in/periodic/move_out)切分。"""
     rows = line_readings(conn, line_id)
     boundary = [r for r in rows if r["kind"] in BOUNDARY_KINDS]
-    out = []
-    for prev, cur in zip(boundary, boundary[1:]):
-        usage = segment_usage(rows, prev, cur)
-        out.append({
-            "line_id": line_id,
-            "reading_id": cur["id"],
-            "start": prev["reading_date"],
-            "end": cur["reading_date"],
-            "usage": usage,
-            "unit_price": cur["tenant_price"],
-            "amount": round(usage * cur["tenant_price"], 2),
-        })
-    return out
-
-
-def period_ending_at(conn, line_id: int, end_reading_id: int):
-    """以某条边界读数收尾的那一个账期;若它是线首(入户读数)则返回 None。"""
-    rows = line_readings(conn, line_id)
-    boundary = [r for r in rows if r["kind"] in BOUNDARY_KINDS]
-    for i, cur in enumerate(boundary):
-        if cur["id"] == end_reading_id:
-            if i == 0:
-                return None
-            prev = boundary[i - 1]
-            usage = segment_usage(rows, prev, cur)
-            return {
-                "line_id": line_id,
-                "reading_id": cur["id"],
-                "start": prev["reading_date"],
-                "end": cur["reading_date"],
-                "usage": usage,
-                "unit_price": cur["tenant_price"],
-                "amount": round(usage * cur["tenant_price"], 2),
-            }
-    return None
+    return [_period(rows, prev, cur) for prev, cur in zip(boundary, boundary[1:])]
 
 
 def all_periods(conn, meter_type: str = None, household_id: int = None,
@@ -168,11 +147,9 @@ def recompute_line(conn, line_id: int) -> None:
 
 def record_period(conn, line_id: int, end_reading_id: int) -> bool:
     """把以某条读数收尾的账期记为应收。等价于重算整条线。"""
-    p = period_ending_at(conn, line_id, end_reading_id)
-    if p is None:
-        return False
     recompute_line(conn, line_id)
-    return True
+    return any(p["reading_id"] == end_reading_id
+               for p in periods_for_line(conn, line_id))
 
 
 def vacancy_usage(conn, date_from: str = "", date_to: str = "") -> list[dict]:

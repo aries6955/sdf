@@ -16,7 +16,7 @@ from .billing import (
     vacancy_usage,
 )
 from .db import connect, get_setting, init_db, set_setting
-from .ledger import all_outstanding, household_ledger, totals
+from .ledger import all_outstanding, household_ledger, margin, paid_to_utility, totals
 from .sample import clear_all, load_sample
 from .views import render
 
@@ -833,21 +833,16 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
             "COALESCE(NULLIF(l.label,''), m.name, h.name) AS display_name "
             "FROM lines l JOIN households h ON h.id=l.household_id "
             "LEFT JOIN meters m ON m.line_id=l.id ORDER BY l.id")]
-        # 缴费按水电分列,毛差必须与应收口径一致:只看水就只减水费
-        paid_by_type = {}
-        for t in ("water", "electricity"):
-            paid_by_type[t] = round(conn.execute(
-                "SELECT COALESCE(SUM(p.amount),0) FROM payments p JOIN meters m ON p.meter_id=m.id "
-                "WHERE m.meter_type=? AND p.payment_date >= ? AND p.payment_date <= ?",
-                (t, date_from or "0000-01-01", date_to or "9999-12-31")).fetchone()[0], 2)
+        paid_by_type = paid_to_utility(conn, date_from, date_to)
         paid_total = (paid_by_type["water"] + paid_by_type["electricity"]
                       if type == "all" else paid_by_type[type])
+        # 毛差只在一处定义:向租户应收减向部门缴出
+        margin_value = margin(conn, None if type == "all" else type, date_from, date_to)
         gaps = vacancy_usage(conn, date_from, date_to)
 
     total_water = sum(x["usage"] for x in rows if x["meter_type"] == "water")
     total_elec = sum(x["usage"] for x in rows if x["meter_type"] == "electricity")
     total_amount = round(sum(x["amount"] for x in rows), 2)
-    margin = round(total_amount - paid_total, 2)
     gap_usage = sum(g["usage"] for g in gaps)
 
     qs = (f"type={type}&household_id={household_id}&line_id={line_id}"
@@ -863,7 +858,7 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
                   page=page, pages=pages, pager=pager, qs=qs,
                   total_water=total_water, total_elec=total_elec,
                   total_amount=total_amount, paid_total=paid_total,
-                  paid_by_type=paid_by_type, margin=margin,
+                  paid_by_type=paid_by_type, margin=margin_value,
                   gaps=gaps, gap_usage=gap_usage)
 
 

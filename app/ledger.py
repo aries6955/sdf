@@ -140,16 +140,41 @@ def all_outstanding(conn) -> list[dict]:
     return result
 
 
-def totals(conn, meter_type: str = None) -> dict:
-    """应收合计 / 已收合计 / 预收余额合计,供首页与统计展示。"""
+def tenant_due(conn, meter_type: str = None, date_from: str = "",
+               date_to: str = "") -> float:
+    """向租户应收:账期金额之和。这是房东向租户开出的钱。"""
     from .billing import all_periods
-    total_due = round(sum(p["amount"] for p in all_periods(conn, meter_type)), 2)
+    return round(sum(p["amount"] for p in all_periods(
+        conn, meter_type, date_from=date_from, date_to=date_to)), 2)
+
+
+def paid_to_utility(conn, date_from: str = "", date_to: str = "") -> dict:
+    """向部门缴出:按水/电分列的缴费金额。部门账单为准,系统不推算。"""
+    out = {}
+    for t in ("water", "electricity"):
+        out[t] = round(conn.execute(
+            "SELECT COALESCE(SUM(p.amount),0) FROM payments p JOIN meters m ON p.meter_id=m.id "
+            "WHERE m.meter_type=? AND p.payment_date >= ? AND p.payment_date <= ?",
+            (t, date_from or "0000-01-01", date_to or "9999-12-31")).fetchone()[0], 2)
+    return out
+
+
+def margin(conn, meter_type: str = None, date_from: str = "",
+           date_to: str = "") -> float:
+    """毛差:向租户应收减向部门缴出。只看水就只减水费,只看电就只减电费。"""
+    paid = paid_to_utility(conn, date_from, date_to)
+    out = paid["water"] + paid["electricity"] if meter_type is None else paid[meter_type]
+    return round(tenant_due(conn, meter_type, date_from, date_to) - out, 2)
+
+
+def totals(conn, meter_type: str = None) -> dict:
+    """首页用:向租户应收 / 冲抵后的实收 / 预收余额。"""
     total_paid = 0.0
     balance = 0.0
     for (hh_id,) in conn.execute("SELECT id FROM households"):
         led = household_ledger(conn, hh_id)
         total_paid += led["total_paid"]
         balance += led["balance"]
-    return {"total_due": total_due,
+    return {"total_due": tenant_due(conn, meter_type),
             "total_paid": round(total_paid, 2),
             "balance": round(balance, 2)}

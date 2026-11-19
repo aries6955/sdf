@@ -26,6 +26,27 @@ def _receivables(conn, household_id: int):
         (household_id,)).fetchall()
 
 
+def _place(net_paid: float, due_rows) -> list[float]:
+    """先欠先冲:把已付净额按账期先后依次分配,返回每一期落到的钱。
+
+    完整台账与锁判定共用这一处,两者因此永远不会漂移。
+    """
+    remaining, placed = net_paid, []
+    for x in due_rows:
+        amount = round(x["amount"], 2)
+        take = round(min(max(remaining, 0.0), amount), 2)
+        remaining = round(remaining - take, 2)
+        placed.append(take)
+    return placed
+
+
+def _net_paid(conn, household_id: int) -> float:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(CASE kind WHEN 'receipt' THEN amount ELSE -amount END), 0) "
+        "FROM receipts WHERE household_id = ?", (household_id,)).fetchone()
+    return round(row[0], 2)
+
+
 def household_ledger(conn, household_id: int) -> dict:
     """某租户的完整账务:每笔应收 + 冲抵结果 + 余额,以及合计。"""
     due_rows = _receivables(conn, household_id)
@@ -35,12 +56,10 @@ def household_ledger(conn, household_id: int) -> dict:
     refunded = round(sum(e["amount"] for e in entries if e["kind"] == "refund"), 2)
     net_paid = round(inflow - refunded, 2)
 
-    # 先欠先冲:按账期先后依次分配已付净额
     remaining = net_paid
     items = []
-    for x in due_rows:
+    for x, placed in zip(due_rows, _place(net_paid, due_rows)):
         amount = round(x["amount"], 2)
-        placed = round(min(max(remaining, 0.0), amount), 2)
         remaining = round(remaining - placed, 2)
         items.append({
             "id": x["id"],
@@ -80,10 +99,14 @@ def paid_periods(conn, household_id: int) -> list[dict]:
     """该租户已收到钱的账期。锁定规则的唯一判据,三处调用共用(改读数、撤回、补录)。
 
     "已收款"按冲抵结果算:先欠先冲之后落在这一期上的钱大于 0,这一期就算锁死。
+    这里只取账期的起止与金额,与完整台账共用同一处冲抵,不构造逐笔明细。
     """
-    led = household_ledger(conn, household_id)
-    return [{"start": i["period_start"], "end": i["period_end"], "paid": i["paid"]}
-            for i in led["rows"] if i["paid"] > EPS]
+    due_rows = conn.execute(
+        "SELECT period_start, period_end, amount FROM receivables "
+        "WHERE household_id = ? ORDER BY period_end, id", (household_id,)).fetchall()
+    placed = _place(_net_paid(conn, household_id), due_rows)
+    return [{"start": x["period_start"], "end": x["period_end"], "paid": take}
+            for x, take in zip(due_rows, placed) if take > EPS]
 
 
 def touched_by_reading(conn, household_id: int, reading_date: str,

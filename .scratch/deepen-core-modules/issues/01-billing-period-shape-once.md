@@ -6,11 +6,15 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 账期字段(起止日期、用量、单价、金额)只在一个地方构造
-- [ ] 那条与全量派生重复的"取某一期"逻辑被删除,外部无引用
-- [ ] "记一期"不再重复计算一遍账期
-- [ ] 换表跨表的账期用量仍等于新旧两段之和
-- [ ] `uv run python scripts/check.py` 全过,现有测试一条不改
-- [ ] 服务以 `--reload` 重启后,示例数据的换表账期数值不变
+- [x] 账期字段(起止日期、用量、单价、金额)只在一个地方构造
+- [x] 那条与全量派生重复的"取某一期"逻辑被删除,外部无引用
+- [x] "记一期"不再重复计算一遍账期
+- [x] 换表跨表的账期用量仍等于新旧两段之和
+- [x] `uv run python scripts/check.py` 全过,现有测试一条不改
+- [x] 服务以 `--reload` 重启后,示例数据的换表账期数值不变
+
+## Comments
+
+已完成。账期形状只在一处构造;period_ending_at 已删除,record_period 随之无调用点也在 code-review 中删除。

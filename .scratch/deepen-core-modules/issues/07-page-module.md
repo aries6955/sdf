@@ -7,12 +7,16 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] 分页控件的 HTML 字符串只在一处生成
-- [ ] 提示条与跳转的拼串只在一处
-- [ ] 至少三个列表页改为只传业务 context 与总条数
-- [ ] 分页链接的查询串、页码边界、首页/末页链接行为不变
-- [ ] 页面 HTML 不被缓存的行为不变
-- [ ] 现有分页与页面断言一条不改且全绿
-- [ ] `uv run python scripts/check.py` 全过
+- [x] 分页控件的 HTML 字符串只在一处生成
+- [x] 提示条与跳转的拼串只在一处
+- [x] 至少三个列表页改为只传业务 context 与总条数
+- [x] 分页链接的查询串、页码边界、首页/末页链接行为不变
+- [x] 页面 HTML 不被缓存的行为不变
+- [x] 现有分页与页面断言一条不改且全绿
+- [x] `uv run python scripts/check.py` 全过
+
+## Comments
+
+已完成。app/pages.py 提供 pager / page_slice / flash / go;main.py 从 1144 行降到 867 行。

@@ -51,10 +51,18 @@ PAYMENTS = [
 
 
 def clear_all(conn) -> None:
-    for table in ("receipts", "receivables", "adjustments", "payments", "takeovers",
-                  "meter_switches", "readings",
-                  "meters", "households", "settings"):
+    """清空全部业务数据,并重置自增计数(下次新增从 id=1 开始)。"""
+    tables = ("receipts", "receivables", "adjustments", "payments", "takeovers",
+              "meter_switches", "readings", "meters", "households", "settings")
+    for table in tables:
         conn.execute(f"DELETE FROM {table}")
+    # AUTOINCREMENT 的计数器存在 sqlite_sequence,不清它 ID 会继续增长
+    has_seq = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'"
+    ).fetchone()
+    if has_seq:
+        marks = ",".join("?" * len(tables))
+        conn.execute(f"DELETE FROM sqlite_sequence WHERE name IN ({marks})", tables)
 
 
 def load_sample(conn) -> None:

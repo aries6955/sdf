@@ -184,3 +184,24 @@ def test_first_period_uses_tenant_base(client):
     assert ">30<" in rows.replace(" ", "") or "30" in rows
     assert "300.00" in rows   # 30 × 10
     assert "500.00" in rows   # 50 × 10
+
+
+def test_clear_resets_autoincrement(client):
+    """清空数据后 ID 从 1 重新开始,不继续累加。"""
+    _setup(client)                      # 建表/租户/读数
+    conn = sqlite3.connect(db.DB_PATH)
+    before = conn.execute("select max(id) from meters").fetchone()[0]
+    conn.close()
+    assert before >= 1
+    client.post("/init/clear")
+    conn = sqlite3.connect(db.DB_PATH)
+    for t in ["households", "meters", "readings", "takeovers", "receivables", "receipts"]:
+        assert conn.execute(f"select count(*) from {t}").fetchone()[0] == 0, t
+    conn.close()
+    # 清空后新建,ID 必须是 1
+    client.post("/meters/add", data={"name": "新表", "meter_type": "water", "level": "main",
+                                     "base_date": "2025-01-01", "base_value": "0"})
+    conn = sqlite3.connect(db.DB_PATH)
+    mid = conn.execute("select id from meters where name='新表'").fetchone()[0]
+    conn.close()
+    assert mid == 1, f"清空后 ID 应为 1,实际 {mid}"

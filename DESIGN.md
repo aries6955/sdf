@@ -86,6 +86,8 @@ motion:
 ### Forms
 
 - label 在控件上方,11-12px 次文字,带 `for`/`id` 配对。
+- 一组控件(如三相读数)不写空 `<label>`,用 `role="group"` + `aria-labelledby` 指向
+  `span.fieldlabel`(样式与 label 同款)。
 - 输入框 4px 圆角,1px 边框;聚焦蓝边 + 2px 浅蓝光晕。
 - 筛选器用 `auto-fit minmax(160px,1fr)` 网格,一行放不下自动换行。
 - 只读字段(自动计算的金额)用灰底。

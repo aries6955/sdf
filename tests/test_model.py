@@ -405,3 +405,53 @@ def test_main_meter_has_no_base(client):
 # ---------- 补录与三相 ----------
 
 
+
+
+# ---------- 回归:审查发现的缺陷 ----------
+
+def test_backfill_blocked_inside_paid_period(client):
+    """补录不能插进已收款的账期 —— 否则账期被一分为二、冲抵重排(ADR-0015/0021)。"""
+    _basic(client)
+    _add(client, "分水A", "2025-03-01", 160)          # 100 → 160,60 吨 × 10 = 600
+    client.post("/receipts/add", data={"household_id": str(_hid("甲")),
+                                       "entry_date": "2025-03-05", "amount": "600"})
+    resp = _add(client, "分水A", "2025-02-01", 130)
+    assert "已收款" in _msg(resp)
+    assert "不能在其区间内补录" in _msg(resp)
+    rows = _q("select period_start, period_end, amount from receivables")
+    assert len(rows) == 1 and rows[0]["amount"] == 600.0, "账期不应被拆分"
+
+    # 删掉收款后补录才放行
+    client.post("/receipts/delete", data={"id": str(_one("select id from receipts")["id"])})
+    assert "抄表已保存" in _msg(_add(client, "分水A", "2025-02-01", 130))
+    assert len(_q("select * from receivables")) == 2
+
+
+def test_edit_blocked_inside_paid_period(client):
+    _basic(client)
+    _add(client, "分水A", "2025-02-01", 130)
+    client.post("/receipts/add", data={"household_id": str(_hid("甲")),
+                                       "entry_date": "2025-02-05", "amount": "100"})
+    rid = _one("select id from readings where kind='periodic'")["id"]
+    resp = client.post("/readings/edit", data={"id": str(rid), "value": "140"},
+                       follow_redirects=False)
+    assert "已收款" in _msg(resp)
+
+
+def test_refund_is_a_receipt_entry(client):
+    """退款走 /receipts/add 的 kind 参数(ADR-0018),没有独立路由。"""
+    _basic(client)
+    _add(client, "分水A", "2025-02-01", 130)
+    client.post("/receipts/add", data={"household_id": str(_hid("甲")),
+                                       "entry_date": "2025-02-05", "amount": "500"})
+    resp = client.post("/receipts/add", data={"household_id": str(_hid("甲")),
+                                              "entry_date": "2025-02-10",
+                                              "amount": "100", "kind": "refund"},
+                       follow_redirects=False)
+    assert "退款已登记" in _msg(resp)
+    from app.ledger import household_ledger
+    conn = db.connect()
+    led = household_ledger(conn, _hid("甲"))
+    conn.close()
+    assert led["refunded"] == 100.0
+    assert led["balance"] == 100.0

@@ -52,7 +52,7 @@ def _add_meter(client, name, kind="water", level="sub", main=None, base="0",
                base_date="2025-01-01", phase="single", **kw):
     """建表。分表必须给装表读数。"""
     data = {"name": name, "meter_type": kind, "level": level,
-            "base_date": base_date, "phase": phase, **kw}
+            "installed_on": base_date, "phase": phase, **kw}
     if level == "sub":
         if phase == "three":
             parts = base.split("/")

@@ -1,4 +1,3 @@
-import html
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -10,9 +9,9 @@ from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .billing import (all_periods, get_line, line_readings, open_lines, period_ending_at,
-                      periods_for_line, record_period, recompute_line, vacancy_usage)
-from .ledger import household_ledger, all_outstanding, totals
+from .billing import (all_periods, get_line, line_readings, open_lines, record_period,
+                      recompute_line, vacancy_usage)
+from .ledger import household_ledger, all_outstanding, totals, touched_by_reading
 from .views import render
 from .db import connect, get_setting, init_db, set_setting
 from .sample import clear_all, load_sample
@@ -64,24 +63,6 @@ async def auth_guard(request: Request, call_next):
 
 
 # ---------- 基础设施 ----------
-
-def h(text) -> str:
-    return html.escape(str(text))
-
-
-def add_month(d: date) -> date:
-    """同日加一个月,月末溢出则截断(如 1/31 -> 2/28)。"""
-    month = d.month + 1
-    year = d.year + (month - 1) // 12
-    month = (month - 1) % 12 + 1
-    day = min(d.day, [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
-                      31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1])
-    return d.replace(year=year, month=month, day=day)
-
-
-def money(value) -> str:
-    return f"{(value or 0):,.2f}"
-
 
 def password_path() -> Path:
     return Path(__file__).resolve().parent.parent / "password.txt"
@@ -322,8 +303,7 @@ def households_page(request: Request, edit: int = Query(0), msg: str = "", ok: s
         for x in rows:
             led = household_ledger(conn, x["id"])
             ledgers[x["id"]] = led
-            line_counts[x["id"]] = sum(
-                1 for l in open_lines(conn, x["id"]))
+            line_counts[x["id"]] = len(open_lines(conn, x["id"]))
             meter_counts[x["id"]] = conn.execute(
                 "SELECT COUNT(*) FROM meters m JOIN lines l ON l.id=m.line_id "
                 "WHERE l.household_id=? AND l.move_out_date IS NULL", (x["id"],)).fetchone()[0]
@@ -560,7 +540,7 @@ def meters_page(request: Request, edit: int = Query(0), swap: str = Query(""),
 @app.post("/meters/add")
 def meter_add(name: str = Form(...), meter_type: str = Form(...), level: str = Form(...),
               main_meter_id: str = Form(""), phase: str = Form("single"),
-              base_date: str = Form(""), base_value: str = Form(""),
+              installed_on: str = Form(""), base_value: str = Form(""),
               base_1: str = Form(""), base_2: str = Form(""), base_3: str = Form(""),
               note: str = Form("")):
     """建表。总表不填基数(读数以部门账单为准);分表必须填装表读数。"""
@@ -571,38 +551,30 @@ def meter_add(name: str = Form(...), meter_type: str = Form(...), level: str = F
     if not name.strip():
         return back("/meters", msg="请填写表名")
     phase = phase if (meter_type == "electricity" and phase in ("single", "three")) else "single"
+    installed_on = installed_on or date.today().isoformat()
     with connect() as conn:
         if level == "main":
-            base_total = base_value_i = None
-            base_date = base_date or date.today().isoformat()
-            br1 = br2 = br3 = None
+            base_value_i = None      # 总表不设基数,读数以部门账单为准
         else:
-            base_date = base_date or date.today().isoformat()
-            if not base_date:
-                return back("/meters", msg="分表需要填写装表日期")
             if phase == "three":
                 parts = [_int(base_1), _int(base_2), _int(base_3)]
                 if any(p is None or p < 0 for p in parts):
                     return back("/meters", msg="三相电表需分别填写三个基数")
-                base_value_i, br1 = sum(parts), parts[0]
-                br2, br3 = parts[1], parts[2]
+                base_value_i = sum(parts)
             else:
                 base_value_i = _int(base_value)
                 if base_value_i is None or base_value_i < 0:
                     return back("/meters", msg="请填写不小于 0 的表基数")
-                br1 = br2 = br3 = None
-            base_total = base_value_i
         main_id = _int(main_meter_id)
         if level == "sub" and main_id:
             parent = conn.execute("SELECT level FROM meters WHERE id=?", (main_id,)).fetchone()
             if not parent or parent["level"] != "main":
                 return back("/meters", msg="所属总表必须是一块总表")
         conn.execute(
-            "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,base_value,base_date,"
-            "installed_on,note) VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,base_value,"
+            "installed_on,note) VALUES (?,?,?,?,?,?,?,?)",
             (name.strip(), meter_type, level, main_id if level == "sub" else None, phase,
-             base_total, base_date if level == "sub" else None,
-             base_date or date.today().isoformat(), note.strip()))
+             base_value_i, installed_on, note.strip()))
     return back("/meters", ok="表已新增")
 
 
@@ -668,7 +640,7 @@ async def switch_add(request: Request):
             conn.execute("UPDATE meters SET main_meter_id=? WHERE main_meter_id=?",
                          (new_id, old_id))
             conn.execute("UPDATE meters SET retired_on=? WHERE id=?", (switch_date, old_id))
-            conn.execute("UPDATE meters SET base_value=NULL, base_date=NULL WHERE id=?", (new_id,))
+            conn.execute("UPDATE meters SET base_value=NULL WHERE id=?", (new_id,))
             conn.execute(
                 "INSERT INTO meter_switches(old_meter_id,new_meter_id,switch_date,old_final_value,"
                 "new_base_value,note) VALUES (?,?,?,?,?,?)",
@@ -817,10 +789,8 @@ def _reading_editable(conn, reading: dict) -> bool:
     line = get_line(conn, reading["line_id"])
     if line is None:
         return False
-    led = household_ledger(conn, line["household_id"])
-    for item in led["rows"]:
-        if item["period_end"] >= reading["reading_date"] and item["paid"] > 0:
-            return False
+    if touched_by_reading(conn, line["household_id"], reading["reading_date"], inserting=False):
+        return False
     if line["move_out_date"]:
         return False
     return True
@@ -884,6 +854,12 @@ async def reading_add(request: Request):
             return back("/readings", msg=f"本次读数 {value} 大于后一条读数 {nxt['value']},请核对")
         if prev is None and value < line["move_in_value"]:
             return back("/readings", msg=f"读数不得小于入住读数 {line['move_in_value']}")
+        # 插进一个已收款的账期会把它一分为二并重排冲抵,因此禁止(ADR-0015/0021)
+        hit = touched_by_reading(conn, line["household_id"], reading_date, inserting=True)
+        if hit:
+            return back("/readings",
+                        msg=f"{hit['start']} ~ {hit['end']} 这一期已收款,不能在其区间内补录。"
+                            "请先删除对应收款。")
         price = _float(form.get("tenant_price", ""), None)
         if price is None:
             base_price = nxt or prev
@@ -917,9 +893,11 @@ async def reading_edit(request: Request):
             return back("/readings", msg="计量线不存在")
         if line["move_out_date"]:
             return back("/readings", msg="该租期已结束,读数锁定")
-        led = household_ledger(conn, line["household_id"])
-        if any(i["period_end"] >= row["reading_date"] and i["paid"] > 0 for i in led["rows"]):
-            return back("/readings", msg="该账期已收款,不能改读数。请先删除对应收款。")
+        hit = touched_by_reading(conn, line["household_id"], row["reading_date"], inserting=False)
+        if hit:
+            return back("/readings",
+                        msg=f"{hit['start']} ~ {hit['end']} 这一期已收款,不能改读数。"
+                            "请先删除对应收款。")
         meter = conn.execute("SELECT * FROM meters WHERE id=?", (row["meter_id"],)).fetchone()
         reading_date = str(form.get("reading_date", "")).strip() or row["reading_date"]
         if meter["phase"] == "three":
@@ -970,9 +948,11 @@ def reading_delete(id: int = Form(...)):
         line = get_line(conn, row["line_id"])
         if line is None:
             return back("/readings", msg="计量线不存在")
-        led = household_ledger(conn, line["household_id"])
-        if any(i["period_end"] >= row["reading_date"] and i["paid"] > 0 for i in led["rows"]):
-            return back("/readings", msg="该账期已收款,不能撤回。请先删除对应收款。")
+        hit = touched_by_reading(conn, line["household_id"], row["reading_date"], inserting=False)
+        if hit:
+            return back("/readings",
+                        msg=f"{hit['start']} ~ {hit['end']} 这一期已收款,不能撤回。"
+                            "请先删除对应收款。")
         if conn.execute("SELECT 1 FROM lines WHERE move_out_date IS NOT NULL AND id=?",
                         (row["line_id"],)).fetchone():
             return back("/readings", msg="该租期已结束,读数锁定")
@@ -1065,27 +1045,26 @@ def _query_rows(conn, type: str, household_id: str, line_id: str,
 
 @app.get("/statistics", response_class=HTMLResponse)
 def statistics_page(request: Request, type: str = Query("all"), household_id: str = Query(""),
-                    meter_id: str = Query(""), date_from: str = Query(""),
+                    line_id: str = Query(""), date_from: str = Query(""),
                     date_to: str = Query(""), page: int = Query(1)):
     with connect() as conn:
-        rows = _query_rows(conn, type, household_id, meter_id, date_from, date_to)
+        rows = _query_rows(conn, type, household_id, line_id, date_from, date_to)
         households = [dict(x) for x in conn.execute("SELECT id,name FROM households ORDER BY id")]
         lines = [dict(x) for x in conn.execute(
             "SELECT l.id, l.label, l.meter_type, h.name AS household_name, m.name AS meter_name, "
             "COALESCE(NULLIF(l.label,''), m.name, h.name) AS display_name "
             "FROM lines l JOIN households h ON h.id=l.household_id "
             "LEFT JOIN meters m ON m.line_id=l.id ORDER BY l.id")]
-        paid_total = round(conn.execute(
-            "SELECT COALESCE(SUM(amount),0) FROM payments WHERE "
-            "payment_date >= ? AND payment_date <= ?",
-            (date_from or "0000-01-01", date_to or "9999-12-31")).fetchone()[0], 2)
-        gaps = vacancy_usage(conn, date_from, date_to)
+        # 缴费按水电分列,毛差必须与应收口径一致:只看水就只减水费
         paid_by_type = {}
         for t in ("water", "electricity"):
             paid_by_type[t] = round(conn.execute(
                 "SELECT COALESCE(SUM(p.amount),0) FROM payments p JOIN meters m ON p.meter_id=m.id "
                 "WHERE m.meter_type=? AND p.payment_date >= ? AND p.payment_date <= ?",
                 (t, date_from or "0000-01-01", date_to or "9999-12-31")).fetchone()[0], 2)
+        paid_total = (paid_by_type["water"] + paid_by_type["electricity"]
+                      if type == "all" else paid_by_type[type])
+        gaps = vacancy_usage(conn, date_from, date_to)
 
     total_water = sum(x["usage"] for x in rows if x["meter_type"] == "water")
     total_elec = sum(x["usage"] for x in rows if x["meter_type"] == "electricity")
@@ -1093,7 +1072,7 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
     margin = round(total_amount - paid_total, 2)
     gap_usage = sum(g["usage"] for g in gaps)
 
-    qs = (f"type={type}&household_id={household_id}&meter_id={meter_id}"
+    qs = (f"type={type}&household_id={household_id}&line_id={line_id}"
           f"&date_from={date_from}&date_to={date_to}")
     page, pages, pager = paginate(len(rows), page, qs)
     page_rows = rows[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
@@ -1101,7 +1080,7 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
     return render("statistics.html", title="统计与查询",
                   lead="按租户、计量线、账期查询用量与费用;并对比向部门缴出与向租户收取。",
                   active="statistics", type=type, household_id=household_id,
-                  meter_id=meter_id, date_from=date_from, date_to=date_to,
+                  line_id=line_id, date_from=date_from, date_to=date_to,
                   households=households, lines=lines, rows=rows, page_rows=page_rows,
                   page=page, pages=pages, pager=pager, qs=qs,
                   total_water=total_water, total_elec=total_elec,
@@ -1112,12 +1091,12 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
 
 @app.get("/statistics/pdf")
 def statistics_pdf(type: str = Query("all"), household_id: str = Query(""),
-                   meter_id: str = Query(""), date_from: str = Query(""),
+                   line_id: str = Query(""), date_from: str = Query(""),
                    date_to: str = Query("")):
     from fpdf import FPDF
 
     with connect() as conn:
-        rows = _query_rows(conn, type, household_id, meter_id, date_from, date_to)
+        rows = _query_rows(conn, type, household_id, line_id, date_from, date_to)
 
     font_path = os.environ.get("SDF_PDF_FONT", "C:/Windows/Fonts/simhei.ttf")
     has_cjk = Path(font_path).exists()

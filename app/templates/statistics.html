@@ -16,8 +16,8 @@
           {% for x in households %}<option value="{{ x.id }}"{% if household_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
         </select></div>
       <div class="field"><label for="s-line">计量线</label>
-        <select id="s-line" name="meter_id"><option value="">全部计量线</option>
-          {% for x in lines %}<option value="{{ x.id }}"{% if meter_id == x.id|string %} selected{% endif %}>{{ x.household_name }} · {{ type_name(x.meter_type) }}{% if x.meter_name %} · {{ x.meter_name }}{% endif %}</option>{% endfor %}
+        <select id="s-line" name="line_id"><option value="">全部计量线</option>
+          {% for x in lines %}<option value="{{ x.id }}"{% if line_id == x.id|string %} selected{% endif %}>{{ x.household_name }} · {{ type_name(x.meter_type) }}{% if x.meter_name %} · {{ x.meter_name }}{% endif %}</option>{% endfor %}
         </select></div>
       <div class="field"><label for="s-from">账期起</label><input id="s-from" type="date" name="date_from" value="{{ date_from }}"></div>
       <div class="field"><label for="s-to">账期止</label><input id="s-to" type="date" name="date_to" value="{{ date_to }}"></div>

@@ -19,8 +19,8 @@
         <span class="assist">换表后必须选新表</span></div>
       <div class="field"><label for="r-date">抄表日期</label><input id="r-date" type="date" name="reading_date" value="{{ today }}" required></div>
       <div class="field" id="singleField"><label for="r-value">本次读数</label><input id="r-value" type="number" name="value" placeholder="表上显示的数字"></div>
-      <div class="field" id="phaseFields" style="display:none">
-        <label>三相读数(相加计费)</label>
+      <div class="field" id="phaseFields" style="display:none" role="group" aria-labelledby="phaseLbl">
+        <span class="fieldlabel" id="phaseLbl">三相读数(相加计费)</span>
         <div class="phase3">
           <input id="r-v1" type="number" name="value_1" placeholder="A相" aria-label="A 相读数">
           <input id="r-v2" type="number" name="value_2" placeholder="B相" aria-label="B 相读数">
@@ -121,11 +121,13 @@
           <form method="post" action="/readings/edit">
             <input type="hidden" name="id" value="{{ x.id }}">
             <div class="formgrid">
-              <div class="field"><label>表</label><input value="{{ x.meter_name }}" disabled></div>
+              <div class="field"><label for="ed-meter-{{ x.id }}">表</label>
+                <input id="ed-meter-{{ x.id }}" value="{{ x.meter_name }}" disabled></div>
               <div class="field"><label for="ed-date-{{ x.id }}">日期</label>
                 <input id="ed-date-{{ x.id }}" type="date" name="reading_date" value="{{ x.reading_date }}" required></div>
               {% if x.phase == 'three' %}
-              <div class="field"><label>三相读数</label>
+              <div class="field" role="group" aria-labelledby="edPhaseLbl-{{ x.id }}">
+                <span class="fieldlabel" id="edPhaseLbl-{{ x.id }}">三相读数</span>
                 <div class="phase3">
                   <input type="number" name="value_1" value="{{ x.r1 }}" required aria-label="A 相">
                   <input type="number" name="value_2" value="{{ x.r2 }}" required aria-label="B 相">

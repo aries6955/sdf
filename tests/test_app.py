@@ -197,3 +197,31 @@ def test_closed_line_still_shows_meter_name(client):
     assert "分水A" in html, "已结束的租期仍要能看到表名"
     stats = client.get("/statistics").text
     assert "分水A" in stats
+
+
+def test_stats_margin_respects_type_filter(client):
+    """毛差必须与应收同口径:只看水时,缴费也只算水费。"""
+    from tests.conftest import _add, _add_meter, _mid, _move_in
+    _add_meter(client, "总水", level="main")
+    _add_meter(client, "总电", kind="electricity", level="main")
+    _add_meter(client, "分水A", base="100")
+    _add_meter(client, "分电A", kind="electricity", base="0")
+    _move_in(client, "甲", [("分水A", 100, 10), ("分电A", 0, 2)])
+    _add(client, "分水A", "2025-02-01", 130)      # 300
+    _add(client, "分电A", "2025-02-01", 50)       # 100
+    client.post("/payments/add", data={"meter_id": str(_mid("总水")),
+                                       "payment_date": "2025-02-05", "amount": "120"})
+    client.post("/payments/add", data={"meter_id": str(_mid("总电")),
+                                       "payment_date": "2025-02-05", "amount": "40"})
+
+    def margin(q):
+        t = client.get(f"/statistics?type={q}").text
+        i = t.find("向部门缴费")
+        seg = t[i:i + 200]
+        import re
+        m = re.search(r"毛差</div><div class=\"v\">\s*([-\d,.]+)", seg)
+        return m.group(1) if m else None
+
+    assert margin("water") == "180.00"          # 300 − 120
+    assert margin("electricity") == "60.00"     # 100 − 40
+    assert margin("all") == "240.00"            # 400 − 160

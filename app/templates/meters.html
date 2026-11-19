@@ -83,11 +83,11 @@
           {% endfor %}
         </select></div>
       <div class="field"><label for="m-new-date">装表日期</label>
-        <input id="m-new-date" type="date" name="base_date" value="{{ today }}"></div>
+        <input id="m-new-date" type="date" name="installed_on" value="{{ today }}"></div>
       <div class="field"><label for="m-new-base">装表读数</label>
         <input id="m-new-base" type="number" name="base_value" placeholder="分表填,总表留空"></div>
-      <div class="field" id="newPhaseFields" style="display:none">
-        <label>三相基数</label>
+      <div class="field" id="newPhaseFields" style="display:none" role="group" aria-labelledby="newPhaseLbl">
+        <span class="fieldlabel" id="newPhaseLbl">三相基数</span>
         <div class="phase3">
           <input type="number" name="base_1" placeholder="A相" aria-label="A 相基数">
           <input type="number" name="base_2" placeholder="B相" aria-label="B 相基数">

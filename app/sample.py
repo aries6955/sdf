@@ -87,10 +87,10 @@ def load_sample(conn) -> None:
     for name, mtype, level, main, phase in METERS:
         b = BASES.get(name)
         cur = conn.execute(
-            "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,base_value,base_date,"
-            "installed_on) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,base_value,"
+            "installed_on) VALUES (?,?,?,?,?,?,?)",
             (name, mtype, level, ids.get(main) if main else None, phase,
-             b[1] if b else None, b[0] if b else None, b[0] if b else "2025-01-01"))
+             b[1] if b else None, b[0] if b else "2025-01-01"))
         ids[name] = cur.lastrowid
 
     lines: dict[str, int] = {}

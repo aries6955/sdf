@@ -76,6 +76,31 @@ def household_ledger(conn, household_id: int) -> dict:
     }
 
 
+def paid_periods(conn, household_id: int) -> list[dict]:
+    """该租户已收到钱的账期。锁定规则的唯一判据,三处调用共用(改读数、撤回、补录)。
+
+    "已收款"按冲抵结果算:先欠先冲之后落在这一期上的钱大于 0,这一期就算锁死。
+    """
+    led = household_ledger(conn, household_id)
+    return [{"start": i["period_start"], "end": i["period_end"], "paid": i["paid"]}
+            for i in led["rows"] if i["paid"] > EPS]
+
+
+def touched_by_reading(conn, household_id: int, reading_date: str,
+                       inserting: bool) -> dict | None:
+    """在某日期增/改读数会动到哪个已收款的账期;没有则返回 None。
+
+    插入一条读数会把包含它的账期一分为二,因此区间用开区间;
+    改或删一条读数会动到以它为端点的账期,用闭区间。
+    """
+    for p in paid_periods(conn, household_id):
+        inside = (p["start"] < reading_date < p["end"] if inserting
+                  else p["start"] <= reading_date <= p["end"])
+        if inside:
+            return p
+    return None
+
+
 def all_outstanding(conn) -> list[dict]:
     """所有有欠款的租户,供首页与统计使用。"""
     result = []

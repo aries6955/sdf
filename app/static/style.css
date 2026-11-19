@@ -184,7 +184,8 @@ body.collapsed a.quit { justify-content: center; }
 .phase3 { display: flex; gap: 6px; }
 .phase3 input { min-width: 0; flex: 1 1 0; padding: 7px 8px; }
 .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.field > label {
+.field > label,
+.field > .fieldlabel {
   font-size: 11.5px; font-weight: 500; color: var(--ink-2);
   line-height: 1.4; min-height: 1.4em;
 }

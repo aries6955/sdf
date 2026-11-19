@@ -30,13 +30,6 @@ def open_lines(conn, household_id: int = None):
     return conn.execute(sql + " ORDER BY l.household_id, l.meter_type, l.id", params).fetchall()
 
 
-def line_for_meter(conn, meter_id: int):
-    """这块表此刻服务的那条线(表只在一条开放线上)。"""
-    return conn.execute(
-        "SELECT l.* FROM lines l JOIN meters m ON m.line_id = l.id "
-        "WHERE m.id = ? AND l.move_out_date IS NULL", (meter_id,)
-    ).fetchone()
-
 
 def segment_usage(rows, start_row, end_row) -> int:
     """start_row 之后到 end_row(含)的用量,跨表分段累加。"""
@@ -134,11 +127,6 @@ def all_periods(conn, meter_type: str = None, household_id: int = None,
     rows.sort(key=lambda r: (r["end"], r["line_id"]))
     return rows
 
-
-def receivable_row(conn, line_id: int, period_end: str):
-    return conn.execute(
-        "SELECT * FROM receivables WHERE line_id = ? AND period_end = ?",
-        (line_id, period_end)).fetchone()
 
 
 def recompute_line(conn, line_id: int) -> None:

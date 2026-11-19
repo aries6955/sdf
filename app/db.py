@@ -43,8 +43,7 @@ CREATE TABLE IF NOT EXISTS meters (
     main_meter_id INTEGER REFERENCES meters(id),
     phase TEXT NOT NULL DEFAULT 'single' CHECK (phase IN ('single', 'three')),
     base_value INTEGER,
-    base_date TEXT,
-    installed_on TEXT,
+    installed_on TEXT,      -- 装表日期;装表读数(base_value)当天的日期
     retired_on TEXT,
     line_id INTEGER REFERENCES lines(id),
     note TEXT NOT NULL DEFAULT ''

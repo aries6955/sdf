@@ -73,8 +73,8 @@ def clear_all(conn) -> None:
 
 
 def load_sample(conn) -> None:
-    """清空后写入一套可核对的示例数据。"""
-    from .billing import record_period
+    """清空后写入一套可核对的示例数据。全部经应用层的真实写入路径,不走平行实现。"""
+    from . import readings, tenancy
 
     clear_all(conn)
     conn.execute("INSERT INTO settings(key,value) VALUES ('property_name',?)", (PROPERTY,))
@@ -96,24 +96,30 @@ def load_sample(conn) -> None:
     lines: dict[str, int] = {}
     for hh_name, move_in, seats in TAKEOVERS:
         for meter_name, value, price in seats:
-            lines[meter_name] = _open_line(conn, hh[hh_name], meter_name, move_in, value, price,
-                                           ids)
+            meter = _meter(conn, ids, meter_name)
+            lines[meter_name] = _move_in_one(conn, hh[hh_name], meter, move_in, value, price)
 
     for meter_name, d, value, price in READINGS:
-        _periodic(conn, lines[meter_name], meter_name, d, value, price, ids, record_period)
+        readings.insert(conn, kind="periodic", line_id=lines[meter_name],
+                        meter_id=ids[meter_name], reading_date=d, parts=_split(value),
+                        price=price)
 
     # 换表:张三的 101 水表 → 101备用水表,2025-03-15。账期不切断。
     lines["101备用水表"] = lines["101水表"]
-    _switch(conn, ids, "101水表", "101备用水表", "2025-03-15", 280, 0)
-    _periodic(conn, lines["101备用水表"], "101备用水表", "2025-04-01", 35, 5.50, ids,
-              record_period)
+    tenancy.swap_meter(conn, old_meter=_meter(conn, ids, "101水表"),
+                       new_meter=_meter(conn, ids, "101备用水表"),
+                       switch_date="2025-03-15",
+                       old_parts=_split(280), new_parts=_split(0), note="示例换表")
+    readings.insert(conn, kind="periodic", line_id=lines["101备用水表"],
+                    meter_id=ids["101备用水表"], reading_date="2025-04-01",
+                    parts=_split(35), price=5.50)
 
     # 王五 2025-04-01 退租
-    _checkout(conn, ids, "103水表", "2025-04-01", 130)
-    _checkout(conn, ids, "103电表", "2025-04-01", (135, 135, 135))
+    _check_out_one(conn, hh, ids, "王五", "103水表", "2025-04-01", _split(130))
+    _check_out_one(conn, hh, ids, "王五", "103电表", "2025-04-01", (405, 135, 135, 135))
 
     # 李四 2025-04-10 入住 103 房;水表 145(空档 15 归房东),没有电表
-    _open_line(conn, hh["李四"], "103水表", "2025-04-10", 145, 5.50, ids)
+    _move_in_one(conn, hh["李四"], _meter(conn, ids, "103水表"), "2025-04-10", 145, 5.50)
 
     for meter, d, rv, up, amount, note in PAYMENTS:
         conn.execute(
@@ -129,74 +135,34 @@ def load_sample(conn) -> None:
         (hh["张三"], "2025-03-20", 20.00, "refund", "抹零"))
 
 
-def _type_of(meter_name: str) -> str:
-    return "electricity" if "电" in meter_name else "water"
+def _meter(conn, ids, name):
+    return conn.execute("SELECT * FROM meters WHERE id=?", (ids[name],)).fetchone()
 
 
-def _split(value):
+def _split(value) -> tuple:
+    """示例表里的读数写法折成 (合计, r1, r2, r3)。三相写成元组。"""
     if isinstance(value, tuple):
         return sum(value), value[0], value[1], value[2]
     return value, None, None, None
 
 
-def _open_line(conn, hh_id, meter_name, move_in, value, price, ids) -> int:
-    total, r1, r2, r3 = _split(value)
-    line = conn.execute(
-        "INSERT INTO lines(household_id,meter_type,label,move_in_date,move_in_value)"
-        " VALUES (?,?,?,?,?)", (hh_id, _type_of(meter_name), "", move_in, total)).lastrowid
-    conn.execute("UPDATE meters SET line_id=? WHERE id=?", (line, ids[meter_name]))
-    conn.execute(
-        "INSERT INTO readings(line_id,meter_id,reading_date,value,r1,r2,r3,tenant_price,kind,"
-        "note) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (line, ids[meter_name], move_in, total, r1, r2, r3, price, "move_in", "入住读数"))
-    return line
+def _move_in_one(conn, hh_id, meter, move_in, value, price) -> int:
+    """示例专用:开一条租期并记入户读数,返回新计量线的编号。"""
+    from . import tenancy
+
+    tenancy.move_in(conn, household_id=hh_id, start_date=move_in,
+                    seats=[(meter, _split(value), price, "")])
+    return conn.execute("SELECT id FROM lines WHERE household_id=? ORDER BY id DESC LIMIT 1",
+                        (hh_id,)).fetchone()["id"]
 
 
-def _periodic(conn, line_id, meter_name, d, value, price, ids, record):
-    total, r1, r2, r3 = _split(value)
-    cur = conn.execute(
-        "INSERT INTO readings(line_id,meter_id,reading_date,value,r1,r2,r3,tenant_price,kind)"
-        " VALUES (?,?,?,?,?,?,?,?,?)",
-        (line_id, ids[meter_name], d, total, r1, r2, r3, price, "periodic"))
-    record(conn, line_id, cur.lastrowid)
+def _check_out_one(conn, hh, ids, hh_name, meter_name, d, parts):
+    from . import tenancy
 
-
-def _switch(conn, ids, old_name, new_name, d, old_final, new_base):
-    from .billing import line_readings
-    old_id, new_id = ids[old_name], ids[new_name]
-    old_m = conn.execute("SELECT * FROM meters WHERE id=?", (old_id,)).fetchone()
-    line_id = old_m["line_id"]
-    rows = line_readings(conn, line_id)
-    price = rows[-1]["tenant_price"] if rows else 0.0
-    conn.execute(
-        "INSERT INTO readings(line_id,meter_id,reading_date,value,tenant_price,kind,note)"
-        " VALUES (?,?,?,?,?,?,?)",
-        (line_id, old_id, d, old_final, price, "switch_out", "旧表终读数"))
-    conn.execute(
-        "INSERT INTO readings(line_id,meter_id,reading_date,value,tenant_price,kind,note)"
-        " VALUES (?,?,?,?,?,?,?)",
-        (line_id, new_id, d, new_base, price, "switch_base", "新表基数"))
-    conn.execute("UPDATE meters SET line_id=NULL, retired_on=? WHERE id=?", (d, old_id))
-    conn.execute("UPDATE meters SET line_id=? WHERE id=?", (line_id, new_id))
-    conn.execute(
-        "INSERT INTO meter_switches(old_meter_id,new_meter_id,switch_date,old_final_value,"
-        "new_base_value,note) VALUES (?,?,?,?,?,?)",
-        (old_id, new_id, d, old_final, new_base, "示例换表"))
-
-
-def _checkout(conn, ids, meter_name, d, value):
-    from .billing import record_period
-    meter = conn.execute("SELECT * FROM meters WHERE id=?", (ids[meter_name],)).fetchone()
-    line_id = meter["line_id"]
-    total, r1, r2, r3 = _split(value)
-    rows = conn.execute("SELECT tenant_price FROM readings WHERE line_id=? "
-                        "ORDER BY reading_date DESC, id DESC LIMIT 1", (line_id,)).fetchone()
-    price = rows["tenant_price"] if rows else 0
-    cur = conn.execute(
-        "INSERT INTO readings(line_id,meter_id,reading_date,value,r1,r2,r3,tenant_price,kind,"
-        "note) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (line_id, meter["id"], d, total, r1, r2, r3, price, "move_out", "退租读数"))
-    record_period(conn, line_id, cur.lastrowid)
-    conn.execute("UPDATE lines SET move_out_date=?, move_out_value=? WHERE id=?",
-                 (d, total, line_id))
-    conn.execute("UPDATE meters SET line_id=NULL WHERE line_id=?", (line_id,))
+    meter = _meter(conn, ids, meter_name)
+    line = conn.execute("SELECT * FROM lines WHERE id=?", (meter["line_id"],)).fetchone()
+    price = conn.execute(
+        "SELECT tenant_price FROM readings WHERE line_id=? "
+        "ORDER BY reading_date DESC, id DESC LIMIT 1", (line["id"],)).fetchone()["tenant_price"]
+    tenancy.check_out(conn, household_id=hh[hh_name], out_date=d,
+                      outs=[(line, meter["id"], parts, price)])

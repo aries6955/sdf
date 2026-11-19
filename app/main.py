@@ -9,10 +9,9 @@ from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import readings
+from . import readings, tenancy
 from .billing import (
     all_periods,
-    line_readings,
     open_lines,
     vacancy_usage,
 )
@@ -401,25 +400,15 @@ async def household_add(request: Request):
                 "WHERE m.id=?", (mid,)).fetchone()
             if not meter:
                 return back("/households", msg="表不存在")
-            if meter["level"] != "sub":
-                return back("/households", msg=f"「{meter['name']}」是总表,不能分配给租户")
-            if meter["retired_on"]:
-                return back("/households", msg=f"「{meter['name']}」已换下,不能分配")
-            if meter["line_id"]:
-                return back("/households", msg=f"「{meter['name']}」现在有人在用,请先给上一任退租")
             last = conn.execute(
-                "SELECT value, tenant_price FROM readings WHERE meter_id=? "
+                "SELECT tenant_price FROM readings WHERE meter_id=? "
                 "ORDER BY reading_date DESC, id DESC LIMIT 1", (mid,)).fetchone()
             try:
                 parts = readings.parts_of(
                     form, meter, (f"base_{mid}", f"base_{mid}_1", f"base_{mid}_2",
                                   f"base_{mid}_3"))
             except readings.ReadingRejected:
-                return back("/households",
-                            msg=f"表「{meter['name']}」需要填写入住读数")
-            if last and parts[0] < last["value"]:
-                return back("/households",
-                            msg=f"「{meter['name']}」的读数 {parts[0]} 小于该表上次读数 {last['value']},请核对")
+                return back("/households", msg=f"表「{meter['name']}」需要填写入住读数")
             price = _float(form.get(f"price_{mid}", ""), None)
             if price is None:
                 price = last["tenant_price"] if last else 0.0
@@ -427,16 +416,11 @@ async def household_add(request: Request):
             seats.append((meter, parts, price, label))
 
         cur = conn.execute("INSERT INTO households(name,note) VALUES (?,?)", (name, note))
-        hh_id = cur.lastrowid
-        for meter, parts, price, label in seats:
-            line = conn.execute(
-                "INSERT INTO lines(household_id,meter_type,label,move_in_date,move_in_value,note)"
-                " VALUES (?,?,?,?,?,?)",
-                (hh_id, meter["meter_type"], label, start_date, parts[0], "")).lastrowid
-            conn.execute("UPDATE meters SET line_id=? WHERE id=?", (line, meter["id"]))
-            readings.insert(conn, kind="move_in", line_id=line, meter_id=meter["id"],
-                            reading_date=start_date, parts=parts, price=price,
-                            note=f"{name} 入住读数")
+        try:
+            tenancy.move_in(conn, household_id=cur.lastrowid, start_date=start_date, seats=seats)
+        except readings.ReadingRejected as e:
+            conn.rollback()      # 校验失败:连刚建的租户行一起撤掉,不留半个人
+            return back("/households", msg=str(e))
     return back("/households", ok=f"已为「{name}」办理入住,共 {len(seats)} 条计量线")
 
 
@@ -472,38 +456,20 @@ async def household_checkout(request: Request):
             lid = line["id"]
             meter = conn.execute(
                 "SELECT m.* FROM meters m WHERE m.line_id=?", (lid,)).fetchone()
-            if line["meter_type"] == "electricity" and meter and meter["phase"] == "three":
-                parts = [_int(form.get(f"out_{lid}_{i}", "")) for i in (1, 2, 3)]
-                if any(p is None or p < 0 for p in parts):
-                    return back(f"/households/{hh_id}/ledger",
-                                msg=f"「{line['label'] or line['meter_type']}」三相表需分别填写三个读数")
-                value, r1, r2, r3 = sum(parts), parts[0], parts[1], parts[2]
-            else:
-                value = _int(form.get(f"out_{lid}", ""))
-                if value is None or value < 0:
-                    return back(f"/households/{hh_id}/ledger",
-                                msg=f"「{line['label'] or line['meter_type']}」需要填写退租读数")
-                r1 = r2 = r3 = None
-            rows = line_readings(conn, lid)
-            if not rows:
-                return back(f"/households/{hh_id}/ledger", msg="该计量线没有读数,无法退租")
-            last = rows[-1]
-            if out_date <= last["reading_date"]:
+            try:
+                parts = readings.parts_of(form, meter,
+                                          (f"out_{lid}", f"out_{lid}_1", f"out_{lid}_2",
+                                           f"out_{lid}_3"))
+            except readings.ReadingRejected:
                 return back(f"/households/{hh_id}/ledger",
-                            msg=f"退租日期需晚于上次读数日期 {last['reading_date']}")
-            if value < last["value"]:
-                return back(f"/households/{hh_id}/ledger",
-                            msg=f"退租读数 {value} 小于上次读数 {last['value']},请核对")
-            pending.append((line, meter["id"], value, r1, r2, r3, last["tenant_price"]))
+                            msg=f"「{line['label'] or line['meter_type']}」需要填写退租读数")
+            last = _line_last(conn, lid)
+            pending.append((line, meter["id"], parts, last["tenant_price"]))
 
-        for line, meter_id, value, r1, r2, r3, price in pending:
-            readings.insert(conn, kind="move_out", line_id=line["id"], meter_id=meter_id,
-                            reading_date=out_date, parts=(value, r1, r2, r3), price=price,
-                            note="退租读数")
-            conn.execute(
-                "UPDATE lines SET move_out_date=?, move_out_value=? WHERE id=?",
-                (out_date, value, line["id"]))
-            conn.execute("UPDATE meters SET line_id=NULL WHERE line_id=?", (line["id"],))
+        try:
+            tenancy.check_out(conn, household_id=hh_id, out_date=out_date, outs=pending)
+        except readings.ReadingRejected as e:
+            return back(f"/households/{hh_id}/ledger", msg=str(e))
     return back(f"/households/{hh_id}/ledger", ok="已退租,本租期账单已结算并关闭")
 
 
@@ -605,70 +571,25 @@ async def switch_add(request: Request):
             return None, f"{label}:三相电表需分别填写三个读数"
 
     with connect() as conn:
-        old_m = conn.execute("SELECT * FROM meters WHERE id=?", (old_id,)).fetchone()
-        new_m = conn.execute("SELECT * FROM meters WHERE id=?", (new_id,)).fetchone()
+        old_m = tenancy.meter(conn, old_id)
+        new_m = tenancy.meter(conn, new_id)
         if not old_m or not new_m:
             return back("/meters", msg="表不存在")
-        if old_m["level"] != new_m["level"] or old_m["meter_type"] != new_m["meter_type"]:
-            return back("/meters", msg="新旧表必须是同类、同级")
-        if old_m["retired_on"]:
-            return back("/meters", msg="旧表已经换下过")
-
-        if old_m["level"] == "main":
-            # 换总表:分表改接到新总表,账期不受影响(总表不参与计费)
-            old_parts, err = _read("old_final_value", old_m, "旧表终读数")
-            if err:
-                return back("/meters", msg=err)
-            new_parts, err = _read("new_base_value", new_m, "新表基数")
-            if err:
-                return back("/meters", msg=err)
-            old_total, new_total = old_parts[0], new_parts[0]
-            conn.execute("UPDATE meters SET main_meter_id=? WHERE main_meter_id=?",
-                         (new_id, old_id))
-            conn.execute("UPDATE meters SET retired_on=? WHERE id=?", (switch_date, old_id))
-            conn.execute("UPDATE meters SET base_value=NULL WHERE id=?", (new_id,))
-            conn.execute(
-                "INSERT INTO meter_switches(old_meter_id,new_meter_id,switch_date,old_final_value,"
-                "new_base_value,note) VALUES (?,?,?,?,?,?)",
-                (old_id, new_id, switch_date, old_total, new_total, note))
-            return back("/meters", ok="已换总表,原接入的分表已改接到新表")
-
-        line = conn.execute(
-            "SELECT l.* FROM lines l WHERE l.id=? AND l.move_out_date IS NULL",
-            (old_m["line_id"],)).fetchone() if old_m["line_id"] else None
-        if not line:
-            return back("/meters", msg="旧表当前没有租户在用,直接把它换下即可不留账期")
         old_parts, err = _read("old_final_value", old_m, "旧表终读数")
         if err:
             return back("/meters", msg=err)
         new_parts, err = _read("new_base_value", new_m, "新表基数")
         if err:
             return back("/meters", msg=err)
-        old_total, new_total = old_parts[0], new_parts[0]
-        rows = line_readings(conn, line["id"])
-        last = rows[-1] if rows else None
-        if last:
-            if switch_date <= last["reading_date"]:
-                return back("/meters", msg=f"换表日期需晚于上次读数日期 {last['reading_date']}")
-            if old_total < last["value"]:
-                return back("/meters", msg=f"旧表终读数 {old_total} 小于上次读数 {last['value']}")
-        if new_m["line_id"]:
-            return back("/meters", msg="新表已在某条计量线上使用")
-
-        price = last["tenant_price"] if last else 0.0
-        readings.insert(conn, kind="switch_out", line_id=line["id"], meter_id=old_id,
-                        reading_date=switch_date, parts=old_parts,
-                        price=price, note="旧表终读数")
-        readings.insert(conn, kind="switch_base", line_id=line["id"], meter_id=new_id,
-                        reading_date=switch_date, parts=new_parts,
-                        price=price, note="新表基数")
-        conn.execute("UPDATE meters SET line_id=NULL, retired_on=? WHERE id=?",
-                     (switch_date, old_id))
-        conn.execute("UPDATE meters SET line_id=? WHERE id=?", (line["id"], new_id))
-        conn.execute(
-            "INSERT INTO meter_switches(old_meter_id,new_meter_id,switch_date,old_final_value,"
-            "new_base_value,note) VALUES (?,?,?,?,?,?)",
-            (old_id, new_id, switch_date, old_total, new_total, note))
+        is_main = old_m["level"] == "main"
+        try:
+            tenancy.swap_meter(conn, old_meter=old_m, new_meter=new_m,
+                               switch_date=switch_date, old_parts=old_parts,
+                               new_parts=new_parts, note=note)
+        except readings.ReadingRejected as e:
+            return back("/meters", msg=str(e))
+    if is_main:
+        return back("/meters", ok="已换总表,原接入的分表已改接到新表")
     return back("/meters", ok="换表已登记,账期不切断,用量将按新旧两段相加")
 
 

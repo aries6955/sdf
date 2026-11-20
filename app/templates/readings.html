@@ -12,7 +12,7 @@
         <select id="r-line" name="line_id" required>
           {% for l in lines %}<option value="{{ l.id }}" data-meter="{{ l.meter.id }}" data-phase="{{ l.meter.phase or 'single' }}" data-price="{{ l.last_price }}" data-last="上次 {{ l.last_date }} · {{ '{:,}'.format(l.last_value) }}">{{ l.household_name }} · {{ type_name(l.meter_type) }}{% if l.label %}·{{ l.label }}{% endif %} · {{ l.meter.name }}</option>{% endfor %}
         </select>
-        <span class="assist" id="r-last"></span></div>
+        <span class="assist key" id="r-last"></span></div>
       <div class="field"><label for="r-meter">本次读数取自</label>
         <select id="r-meter" name="meter_id" required>
           {% for l in lines %}<option value="{{ l.meter.id }}" data-line="{{ l.id }}">{{ l.meter.name }}</option>{% endfor %}

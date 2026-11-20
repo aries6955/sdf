@@ -191,6 +191,11 @@ body.collapsed a.quit { justify-content: center; }
 }
 .field .assist { font-size: 11px; color: var(--muted); line-height: 1.4; }
 .field .assist:empty { display: none; }
+/* 上次读数是要看准了再抄数的参考值,不能像普通提示那样弱 */
+.field .assist.key {
+  font-size: 13px; color: var(--ink-2); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
 input, select, textarea {
   font: inherit; font-size: 13px; color: var(--ink);
   padding: 7px 10px; border: 1px solid var(--line-2);

@@ -78,7 +78,7 @@
           <td class="num">{{ x.unit_price if x.unit_price is not none else '—' }}</td>
           <td class="num">{{ money(x.amount) }}</td>
           <td class="wrap">{{ x.note or '—' }}</td>
-          <td><form method="post" action="/payments/delete" onsubmit="return confirm('删除这条缴费记录?')">
+          <td><form method="post" action="/payments/delete" data-confirm="删除这条缴费记录?">
             <input type="hidden" name="id" value="{{ x.id }}"><button class="danger small" type="submit">删除</button></form></td>
         </tr>
         {% endfor %}

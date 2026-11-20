@@ -10,8 +10,9 @@
     <div class="formgrid">
       <div class="field"><label for="r-line">计量线</label>
         <select id="r-line" name="line_id" required>
-          {% for l in lines %}<option value="{{ l.id }}" data-meter="{{ l.meter.id }}" data-phase="{{ l.meter.phase or 'single' }}" data-price="{{ l.last_price }}">{{ l.household_name }} · {{ type_name(l.meter_type) }}{% if l.label %}·{{ l.label }}{% endif %} · {{ l.meter.name }}(上次 {{ l.last_date }} · {{ '{:,}'.format(l.last_value) }})</option>{% endfor %}
-        </select></div>
+          {% for l in lines %}<option value="{{ l.id }}" data-meter="{{ l.meter.id }}" data-phase="{{ l.meter.phase or 'single' }}" data-price="{{ l.last_price }}" data-last="上次 {{ l.last_date }} · {{ '{:,}'.format(l.last_value) }}">{{ l.household_name }} · {{ type_name(l.meter_type) }}{% if l.label %}·{{ l.label }}{% endif %} · {{ l.meter.name }}</option>{% endfor %}
+        </select>
+        <span class="assist" id="r-last"></span></div>
       <div class="field"><label for="r-meter">本次读数取自</label>
         <select id="r-meter" name="meter_id" required>
           {% for l in lines %}<option value="{{ l.meter.id }}" data-line="{{ l.id }}">{{ l.meter.name }}</option>{% endfor %}
@@ -40,6 +41,7 @@
     var single=document.getElementById('singleField'), phase=document.getElementById('phaseFields');
     var v1=document.getElementById('r-v1'), v2=document.getElementById('r-v2'), v3=document.getElementById('r-v3');
     var sum=document.getElementById('phaseSum'), price=document.getElementById('r-price');
+    var lastHint=document.getElementById('r-last');
     function syncMeters(){
       var lid=lineSel.value;
       for(var i=0;i<meterSel.options.length;i++){
@@ -69,6 +71,7 @@
     lineSel.addEventListener('change',function(){
       var o=lineSel.options[lineSel.selectedIndex];
       price.value=o.dataset.price||'';
+      lastHint.textContent=o.dataset.last||'';
       syncMeters();
     });
     meterSel.addEventListener('change',syncPhase);
@@ -154,7 +157,7 @@
               <button class="ghost small editonly" type="button" data-cancel hidden>取消</button>
               {% endif %}
               {% if x.kind == 'periodic' and x.can_edit %}
-              <form method="post" action="/readings/delete" onsubmit="return confirm('撤回这条抄表?前后账期会重算。')">
+              <form method="post" action="/readings/delete" data-confirm="撤回这条抄表?前后账期会重算。">
                 <input type="hidden" name="id" value="{{ x.id }}"><button class="danger small view" type="submit">撤回</button></form>
               {% endif %}
               {% if x.amount and x.amount > 0.005 and not x.settled %}

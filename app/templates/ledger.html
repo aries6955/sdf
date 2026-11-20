@@ -145,7 +145,7 @@
           <td class="num">{{ money(e.amount) }}</td>
           <td class="wrap">{{ e.note or '—' }}</td>
           <td>
-            <form method="post" action="/receipts/delete" onsubmit="return confirm('删除这条记录?相关账期会解锁。')">
+            <form method="post" action="/receipts/delete" data-confirm="删除这条记录?相关账期会解锁。">
               <input type="hidden" name="id" value="{{ e.id }}">
               <input type="hidden" name="back" value="/ledger?{{ qs }}">
               <button class="danger small" type="submit">删除</button></form>

@@ -381,6 +381,26 @@ ul.plain li { margin: 3px 0; }
 }
 .loginbox .flash { margin-bottom: 16px; }
 
+/* ---------- 确认卡片 ---------- */
+.confirmwrap {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center; padding: 24px;
+  background: rgba(16, 24, 40, .38);
+}
+.confirmbox {
+  width: 100%; max-width: 380px; background: var(--surface);
+  border: 1px solid var(--line); border-top: 3px solid var(--negative);
+  border-radius: var(--radius-md); padding: 22px 24px 18px;
+  box-shadow: 0 1px 3px rgba(16,24,40,.06), 0 12px 32px rgba(16,24,40,.12);
+}
+.confirmbox h3 {
+  margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--ink);
+}
+.confirmtext {
+  margin: 0 0 18px; font-size: 12.8px; line-height: 1.65; color: var(--ink-2);
+}
+.confirmbox .actions { margin: 0; display: flex; gap: 8px; justify-content: flex-end; }
+
 /* ---------- 窄屏 ---------- */
 @media (max-width: 860px) {
   .sidebar { position: static; width: auto; border-right: 0; border-bottom: 1px solid var(--line); }

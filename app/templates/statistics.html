@@ -71,8 +71,8 @@
           <td>{{ x.display_name or '—' }}</td>
           <td>{{ x.start }}</td>
           <td>{{ x.end }}</td>
-          <td class="num">{{ '{:,}'.format(x.start_value) }}</td>
-          <td class="num">{{ '{:,}'.format(x.end_value) }}</td>
+          <td class="num">{{ '{:,}'.format(x.start_value) }}{% if x.start_r1 is not none %} <span class="tag muted">{{ x.start_r1 }}/{{ x.start_r2 }}/{{ x.start_r3 }}</span>{% endif %}</td>
+          <td class="num">{{ '{:,}'.format(x.end_value) }}{% if x.end_r1 is not none %} <span class="tag muted">{{ x.end_r1 }}/{{ x.end_r2 }}/{{ x.end_r3 }}</span>{% endif %}</td>
           <td class="num">{{ '{:,}'.format(x.usage) }}</td>
           <td class="num">{{ x.unit_price }}</td>
           <td class="num">{{ money(x.amount) }}</td>

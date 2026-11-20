@@ -138,3 +138,25 @@ def test_readings_show_three_phase_previous(client):
     html = client.get("/readings").text
     # 第二条的上期应是 120/130/140
     assert "120/130/140" in html
+
+
+def test_statistics_shows_three_phase_readings(client):
+    """统计页的三相账期要显示分相读数,与抄表页一致。"""
+    from tests.conftest import _add, _add_meter, _move_in
+    _add_meter(client, "分电A", kind="electricity", phase="three", base="100/100/100")
+    _move_in(client, "甲", [("分电A", (100, 100, 100), 1)])
+    _add(client, "分电A", "2025-02-01", (120, 130, 140))
+    html = client.get("/statistics").text
+    assert "100/100/100" in html and "120/130/140" in html
+
+
+def test_confirm_is_a_card_not_browser_dialog(client):
+    """确认走页面内的卡片,不再用浏览器原生 confirm。"""
+    from tests.conftest import _add, _add_meter, _move_in
+    _add_meter(client, "分水A", base="100")
+    _move_in(client, "甲", [("分水A", 100, 5)])
+    _add(client, "分水A", "2025-02-01", 130)
+    html = client.get("/readings").text
+    assert 'data-confirm="撤回这条抄表?前后账期会重算。"' in html
+    assert "return confirm(" not in html
+    assert "/static/confirm.js" in html

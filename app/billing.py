@@ -61,6 +61,9 @@ def _period(rows, prev, cur) -> dict:
         "usage": usage,
         "unit_price": cur["tenant_price"],
         "amount": round(usage * cur["tenant_price"], 2),
+        # 账期两端的表读数,供统计页展示;跨表分段时两者取自不同的表
+        "start_value": prev["value"],
+        "end_value": cur["value"],
     }
 
 

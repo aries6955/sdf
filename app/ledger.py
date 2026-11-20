@@ -140,6 +140,26 @@ def all_outstanding(conn) -> list[dict]:
     return result
 
 
+def settled_periods(conn) -> dict:
+    """每个账期落到的钱与欠款,按 (line_id, 账期止) 索引。
+
+    统计页把账期与收款摆在一起时用这里,冲抵仍只由 _place 这一处决定。
+    """
+    out = {}
+    for h in conn.execute("SELECT id FROM households ORDER BY id"):
+        for x in household_ledger(conn, h["id"])["rows"]:
+            out[(x["line_id"], x["period_end"])] = {
+                "paid": x["paid"], "outstanding": x["outstanding"], "settled": x["settled"]}
+    return out
+
+
+def household_summaries(conn) -> list[dict]:
+    """每户一行的台账摘要:应收、已收、欠款、预收余额。首页台账卡片用。"""
+    return [{"household_id": h["id"], "household_name": h["name"], **led}
+            for h in conn.execute("SELECT id, name FROM households ORDER BY id")
+            for led in [household_ledger(conn, h["id"])]]
+
+
 def tenant_due(conn, meter_type: str = None, household_id: int = None,
                date_from: str = "", date_to: str = "") -> float:
     """向租户应收:账期金额之和。这是房东向租户开出的钱。"""

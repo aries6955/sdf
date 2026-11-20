@@ -26,18 +26,52 @@
     {% if balance %}
     <li>预收余额合计 {{ money(balance) }} 元,可用于抵扣后续账期</li>
     {% endif %}
-    {% if outstanding_total and outstanding_total > 0 %}
-    <li><a href="/households">有租户欠款 {{ money(outstanding_total) }} 元</a>,到租户台账查看明细</li>
-    {% endif %}
+    <li><a href="#ledger">收款台账</a> — 应收 {{ money(total_due) }},已收 {{ money(total_paid) }}
+      {% if outstanding_total and outstanding_total > 0 %},<span class="tag warn">未收 {{ money(outstanding_total) }}</span>{% endif %}</li>
     <li><a href="/statistics">查看统计与费用</a> — 共 {{ reading_count }} 条抄表记录</li>
   </ul>
+</section>
+
+<section class="card" id="ledger">
+  <h2>收款台账</h2>
+  <p class="hint">逐户的应收、已收与欠款。点租户名进该户明细。</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>租户</th><th class="num">应收(元)</th><th class="num">已收(元)</th><th class="num">未收(元)</th><th class="num">预收余额(元)</th><th>状态</th></tr></thead>
+      <tbody>
+        {% if not ledger_rows %}<tr><td colspan="6" class="empty">还没有租户。</td></tr>{% endif %}
+        {% for x in ledger_rows %}
+        <tr>
+          <td><a href="/households/{{ x.household_id }}/ledger">{{ x.household_name }}</a></td>
+          <td class="num">{{ money(x.total_due) }}</td>
+          <td class="num">{{ money(x.total_paid) }}</td>
+          <td class="num">{{ money(x.outstanding) }}</td>
+          <td class="num">{{ money(x.balance) }}</td>
+          <td>{% if x.outstanding > 0.005 %}<span class="tag warn">未收款</span>{% else %}<span class="tag ok">已结清</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if ledger_rows %}
+      <tfoot>
+        <tr>
+          <th>合计 {{ ledger_rows|length }} 户</th>
+          <th class="num">{{ money(total_due) }}</th>
+          <th class="num">{{ money(total_paid) }}</th>
+          <th class="num">{{ money(outstanding_total) }}</th>
+          <th class="num">{{ money(balance) }}</th>
+          <th></th>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
 </section>
 {% if recent %}
 <section class="card">
   <h2>最近账期</h2>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>租户</th><th>类型</th><th>账期</th><th>用量</th><th>单价</th><th>应收(元)</th></tr></thead>
+      <thead><tr><th>租户</th><th>类型</th><th>账期</th><th class="num">用量</th><th class="num">单价</th><th class="num">应收(元)</th></tr></thead>
       <tbody>
         {% for x in recent %}
         <tr>

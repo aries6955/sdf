@@ -13,7 +13,7 @@
   <p class="hint">每条线独立算账:账期由入住读数与退租读数划界。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>类型</th><th>线名</th><th>当前表</th><th>入住日期</th><th>入住读数</th></tr></thead>
+      <thead><tr><th>类型</th><th>线名</th><th>当前表</th><th>入住日期</th><th class="num">入住读数</th></tr></thead>
       <tbody>
       {% for l in lines %}
         <tr>
@@ -35,7 +35,7 @@
   <p class="hint">抄表时自动生成应收。收款记在租户名下,按最早欠账优先自动冲抵,多收的成为预收余额。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>类型</th><th>线名</th><th>账期</th><th>用量</th><th>单价</th><th>应收(元)</th><th>已收(元)</th><th>欠款(元)</th><th>状态</th></tr></thead>
+      <thead><tr><th>类型</th><th>线名</th><th>账期</th><th class="num">用量</th><th class="num">单价</th><th class="num">应收(元)</th><th class="num">已收(元)</th><th class="num">欠款(元)</th><th>状态</th></tr></thead>
       <tbody>
         {% if not ledger.rows %}
         <tr><td colspan="9" class="empty">还没有账期。到「抄表」录入读数后,这里会自动生成应收。</td></tr>
@@ -83,7 +83,7 @@
   {% if ledger.entries %}
   <div class="tablewrap">
     <table>
-      <thead><tr><th>日期</th><th>类型</th><th>金额(元)</th><th>备注</th><th>操作</th></tr></thead>
+      <thead><tr><th>日期</th><th>类型</th><th class="num">金额(元)</th><th>备注</th><th>操作</th></tr></thead>
       <tbody>
       {% for e in ledger.entries %}
         <tr>
@@ -118,7 +118,7 @@
     <div class="card-section">
       <div class="tablewrap">
         <table>
-          <thead><tr><th>类型</th><th>线名</th><th>当前表</th><th>上次读数</th><th>退租读数</th></tr></thead>
+          <thead><tr><th>类型</th><th>线名</th><th>当前表</th><th class="num">上次读数</th><th class="num">退租读数</th></tr></thead>
           <tbody>
           {% for l in lines %}
             {% set meter = l.meter_name %}
@@ -144,7 +144,7 @@
   <h2>已结束的租期</h2>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>类型</th><th>线名</th><th>入住</th><th>退租</th><th>退租读数</th></tr></thead>
+      <thead><tr><th>类型</th><th>线名</th><th>入住</th><th>退租</th><th class="num">退租读数</th></tr></thead>
       <tbody>
       {% for l in closed %}
         <tr>

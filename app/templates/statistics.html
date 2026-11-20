@@ -34,6 +34,8 @@
   <div class="stat"><div class="k">水用量</div><div class="v">{{ '{:,}'.format(total_water) }}</div></div>
   <div class="stat"><div class="k">电用量</div><div class="v">{{ '{:,}'.format(total_elec) }}</div></div>
   <div class="stat"><div class="k">向租户应收</div><div class="v">{{ money(total_amount) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">向租户已收</div><div class="v">{{ money(total_paid) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">未收</div><div class="v">{{ money(total_outstanding) }}<span class="u"> 元</span></div></div>
   <div class="stat"><div class="k">向部门缴费</div><div class="v">{{ money(paid_total) }}<span class="u"> 元</span></div></div>
   <div class="stat"><div class="k">毛差</div><div class="v">{{ money(margin) }}<span class="u"> 元</span></div></div>
 </div>
@@ -44,7 +46,7 @@
   <p class="hint">上一任退租与下一任入住之间无人使用的区间。<b>归房东,不进任何租户账单。</b>合计 {{ '{:,}'.format(gap_usage) }}。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>表</th><th>区间</th><th>用量</th></tr></thead>
+      <thead><tr><th>表</th><th>区间</th><th class="num">用量</th></tr></thead>
       <tbody>
       {% for g in gaps %}
         <tr><td>{{ g.meter_name }}</td><td>{{ g.start }} ~ {{ g.end }}</td><td class="num">{{ '{:,}'.format(g.usage) }}</td></tr>
@@ -59,9 +61,9 @@
   <h2>账期明细 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>租户</th><th>类型</th><th>线名</th><th>账期起</th><th>账期止</th><th>用量</th><th>单价</th><th>金额(元)</th></tr></thead>
+      <thead><tr><th>租户</th><th>类型</th><th>线名</th><th>账期起</th><th>账期止</th><th class="num">上期读数</th><th class="num">本期读数</th><th class="num">用量</th><th class="num">单价</th><th class="num">应收(元)</th><th class="num">已收(元)</th><th class="num">未收(元)</th><th>状态</th></tr></thead>
       <tbody>
-        {% if not page_rows %}<tr><td colspan="8" class="empty">没有符合条件的账期。</td></tr>{% endif %}
+        {% if not page_rows %}<tr><td colspan="13" class="empty">没有符合条件的账期。</td></tr>{% endif %}
         {% for x in page_rows %}
         <tr>
           <td>{{ x.household_name }}</td>
@@ -69,19 +71,27 @@
           <td>{{ x.display_name or '—' }}</td>
           <td>{{ x.start }}</td>
           <td>{{ x.end }}</td>
+          <td class="num">{{ '{:,}'.format(x.start_value) }}</td>
+          <td class="num">{{ '{:,}'.format(x.end_value) }}</td>
           <td class="num">{{ '{:,}'.format(x.usage) }}</td>
           <td class="num">{{ x.unit_price }}</td>
           <td class="num">{{ money(x.amount) }}</td>
+          <td class="num">{{ money(x.paid) }}</td>
+          <td class="num">{{ money(x.outstanding) }}</td>
+          <td>{% if x.settled %}<span class="tag ok">已结清</span>{% elif x.paid > 0.005 %}<span class="tag warn">部分收款</span>{% else %}<span class="tag warn">未收款</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
       {% if page_rows %}
       <tfoot>
         <tr>
-          <th colspan="5">本页合计</th>
+          <th colspan="7">本页合计</th>
           <th class="num">{{ '{:,}'.format(page_rows|sum(attribute='usage')) }}</th>
           <th></th>
           <th class="num">{{ money(page_rows|sum(attribute='amount')) }}</th>
+          <th class="num">{{ money(page_rows|sum(attribute='paid')) }}</th>
+          <th class="num">{{ money(page_rows|sum(attribute='outstanding')) }}</th>
+          <th></th>
         </tr>
       </tfoot>
       {% endif %}

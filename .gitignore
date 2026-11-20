@@ -9,3 +9,6 @@ data.sqlite3.bak*
 # .scratch/ 按 AGENTS.md 约定是 issue/spec 的存放处,需要入库;
 # 只忽略零散草稿,保留 spec.md 与 issues/。
 .scratch/*/notes/
+
+# 本地临时目录:服务日志与截图,不入库
+.tmp/

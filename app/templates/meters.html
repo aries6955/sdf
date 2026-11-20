@@ -5,7 +5,7 @@
   <p class="hint">总表对上向供水/供电部门结算,不向租户计费,也没有基数 —— 读数以部门账单为准。分表的归属由入住产生,此处只读展示。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>表名</th><th>类型</th><th>级别</th><th>所属总表</th><th>当前租户</th><th>装表读数</th><th>状态</th><th>操作</th></tr></thead>
+      <thead><tr><th>表名</th><th>类型</th><th>级别</th><th>所属总表</th><th>当前租户</th><th class="num">装表读数</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>
         {% if not rows %}<tr><td colspan="8" class="empty">还没有表,用下方表单添加。</td></tr>{% endif %}
         {% for x in rows %}

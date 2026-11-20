@@ -5,7 +5,7 @@
   <p class="hint">租户是收水电费的对象。一户可以挂多条计量线(多块水表 / 多块电表)。</p>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>租户名称</th><th>在用计量线</th><th>分表</th><th>应收</th><th>已收</th><th>欠款</th><th>预收余额</th><th>操作</th></tr></thead>
+      <thead><tr><th>租户名称</th><th>在用计量线</th><th class="num">分表</th><th>应收</th><th>已收</th><th>欠款</th><th>预收余额</th><th>操作</th></tr></thead>
       <tbody>
         {% if not rows %}
         <tr><td colspan="8" class="empty">还没有租户,用下方表单办理入住。</td></tr>
@@ -73,7 +73,7 @@
       <p class="card-section-title">这块住哪几块表</p>
       <div class="tablewrap">
         <table>
-          <thead><tr><th style="width:48px">选用</th><th>表</th><th>类型</th><th>当前持有人</th><th>最近读数</th><th>入住读数</th><th>单价</th><th>线名</th></tr></thead>
+          <thead><tr><th style="width:48px">选用</th><th>表</th><th>类型</th><th>当前持有人</th><th class="num">最近读数</th><th class="num">入住读数</th><th class="num">单价</th><th>线名</th></tr></thead>
           <tbody>
           {% for m in meters %}
             {% if m.line_id %}<tr><td colspan="8" class="empty">{{ m.name }} 正在被 {{ m.holder }} 使用,退租后才可选。</td></tr>{% endif %}

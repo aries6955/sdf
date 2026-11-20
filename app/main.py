@@ -19,9 +19,11 @@ from .db import connect, get_setting, init_db, set_setting
 from .ledger import (
     all_outstanding,
     household_ledger,
+    household_summaries,
     margin_from,
     paid_for,
     paid_to_utility,
+    settled_periods,
     totals,
 )
 from .pages import PAGE_SIZE, flash, go, page_slice
@@ -177,6 +179,7 @@ def index(request: Request):
             "SELECT MAX(reading_date) FROM readings WHERE kind='periodic'").fetchone()[0]
         t = totals(conn)
         outstanding_total = round(sum(x["outstanding"] for x in all_outstanding(conn)), 2)
+        ledger_rows = household_summaries(conn)
         open_count = len(open_lines(conn))
         periods = all_periods(conn)
         recent = periods[-5:][::-1]
@@ -189,7 +192,7 @@ def index(request: Request):
         household_count=household_count, meter_count=meter_count,
         reading_count=reading_count, open_count=open_count, paid=paid, last=last,
         total_due=t["total_due"], total_paid=t["total_paid"], balance=t["balance"],
-        outstanding_total=outstanding_total, recent=recent,
+        outstanding_total=outstanding_total, recent=recent, ledger_rows=ledger_rows,
         setup_done=household_count > 0 and meter_count > 0,
     )
 
@@ -641,6 +644,14 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
         all_readings = [dict(x) for x in detail]
         for x in all_readings:
             x["can_edit"] = readings.editable(conn, x)
+            # 同一块表的上一条读数,必须按“同一块表”取 —— 换表后旧表读数不能与
+            # 新表读数相减,否则会得出一个巨大的负数
+            prev = conn.execute(
+                "SELECT value, reading_date FROM readings WHERE meter_id=? AND id<>? "
+                "AND reading_date <= ? ORDER BY reading_date DESC, id DESC LIMIT 1",
+                (x["meter_id"], x["id"], x["reading_date"])).fetchone()
+            x["prev_value"] = prev["value"] if prev else None
+            x["prev_date"] = prev["reading_date"] if prev else None
     return render("readings.html", title="抄表",
                   lead="记录各计量线的读数。抄表即当场算出该账期的应收。",
                   active="readings", lines=lines_sorted, all_lines=all_lines,
@@ -683,12 +694,22 @@ async def reading_edit(request: Request):
     """改读数。已开始收款的账期锁死,须先删收款;入户读数不可改(它是租期起点)。"""
     form = await request.form()
     rid = _int(form.get("id"))
+    back = _readings_back(form)
     with connect() as conn:
         try:
             readings.change(conn, rid, form)
         except readings.ReadingRejected as e:
-            return go("/readings", msg=str(e))
-    return go("/readings", ok="读数已更新,相关账期已重算")
+            return RedirectResponse(f"/readings?{back}&msg={quote(str(e))}", status_code=303)
+    return RedirectResponse(
+        f"/readings?{back}&ok={quote('读数已更新,相关账期已重算')}#r{rid}",
+        status_code=303)
+
+
+def _readings_back(form) -> str:
+    """把列表页的筛选与页码原样带回来,改完读数不把用户踢回第一页。"""
+    return "&".join(
+        f"{k}={quote(str(form.get(k, '') or ''))}"
+        for k in ("line_id", "household_id", "date_from", "date_to", "page"))
 
 
 @app.post("/readings/delete")
@@ -732,6 +753,17 @@ def payments_page(request: Request, msg: str = "", ok: str = "", page: int = 1,
             f"JOIN meters m ON p.meter_id=m.id {clause} "
             f"ORDER BY p.payment_date DESC, p.id DESC LIMIT ? OFFSET ?",
             params + [PAGE_SIZE, (page - 1) * PAGE_SIZE])]
+        # 上期账单读数与用量:账单自带读数时才有意义,按同一块总表往前找
+        for x in rows:
+            prev = conn.execute(
+                "SELECT reading_value FROM payments WHERE meter_id=? AND id<>? "
+                "AND reading_value IS NOT NULL AND payment_date <= ? "
+                "ORDER BY payment_date DESC, id DESC LIMIT 1",
+                (x["meter_id"], x["id"], x["payment_date"])).fetchone()
+            x["prev_reading"] = prev["reading_value"] if prev else None
+            x["period_usage"] = (x["reading_value"] - x["prev_reading"]
+                                 if x["prev_reading"] is not None
+                                 and x["reading_value"] is not None else None)
         per_meter = [dict(x) for x in conn.execute(
             "SELECT m.id, m.name, m.meter_type, COALESCE(SUM(p.amount),0) AS total "
             "FROM meters m LEFT JOIN payments p ON p.meter_id=m.id "
@@ -793,6 +825,12 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
                     date_to: str = Query(""), page: int = Query(1)):
     with connect() as conn:
         rows = _query_rows(conn, type, household_id, line_id, date_from, date_to)
+        settled = settled_periods(conn)
+        for x in rows:
+            s = settled.get((x["line_id"], x["end"]))
+            x["paid"] = s["paid"] if s else 0.0
+            x["outstanding"] = s["outstanding"] if s else round(x["amount"], 2)
+            x["settled"] = s["settled"] if s else False
         households = [dict(x) for x in conn.execute("SELECT id,name FROM households ORDER BY id")]
         lines = [dict(x) for x in conn.execute(
             "SELECT l.id, l.label, l.meter_type, h.name AS household_name, m.name AS meter_name, "
@@ -806,6 +844,8 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
     total_water = sum(x["usage"] for x in rows if x["meter_type"] == "water")
     total_elec = sum(x["usage"] for x in rows if x["meter_type"] == "electricity")
     total_amount = round(sum(x["amount"] for x in rows), 2)
+    total_paid = round(sum(x["paid"] for x in rows), 2)
+    total_outstanding = round(sum(x["outstanding"] for x in rows), 2)
     # 应收与缴出取自同一组筛选条件(租户、计量线、账期区间),毛差才恒等
     margin_value = margin_from(total_amount, paid_total)
     gap_usage = sum(g["usage"] for g in gaps)
@@ -821,7 +861,9 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
                   households=households, lines=lines, rows=rows, page_rows=page_rows,
                   page=page, pages=pages, pager=pager, qs=qs,
                   total_water=total_water, total_elec=total_elec,
-                  total_amount=total_amount, paid_total=paid_total,
+                  total_amount=total_amount, total_paid=total_paid,
+                  total_outstanding=total_outstanding,
+                  paid_total=paid_total,
                   paid_by_type=paid_by_type, margin=margin_value,
                   gaps=gaps, gap_usage=gap_usage)
 
@@ -834,6 +876,11 @@ def statistics_pdf(type: str = Query("all"), household_id: str = Query(""),
 
     with connect() as conn:
         rows = _query_rows(conn, type, household_id, line_id, date_from, date_to)
+        settled = settled_periods(conn)
+        for x in rows:
+            s_ = settled.get((x["line_id"], x["end"]))
+            x["paid"] = s_["paid"] if s_ else 0.0
+            x["outstanding"] = s_["outstanding"] if s_ else round(x["amount"], 2)
 
     font_path = os.environ.get("SDF_PDF_FONT", "C:/Windows/Fonts/simhei.ttf")
     has_cjk = Path(font_path).exists()
@@ -844,12 +891,14 @@ def statistics_pdf(type: str = Query("all"), household_id: str = Query(""),
         pdf.add_font("cjk", fname=font_path)
         pdf.set_font("cjk", size=10)
         title = "水电费统计报表"
-        headers = ["租户", "计量线", "账期起", "账期止", "用量", "单价", "金额(元)"]
+        headers = ["租户", "计量线", "账期起", "账期止", "上期读数", "本期读数", "用量",
+                   "单价", "应收(元)", "已收(元)", "未收(元)"]
     else:
         pdf.set_font("Helvetica", size=9)
         title = "Utility Bill Report"
-        headers = ["Household", "Line", "Start", "End", "Usage", "Price", "Amount"]
-    widths = [42, 62, 28, 28, 24, 24, 36]
+        headers = ["Household", "Line", "Start", "End", "Prev", "Curr", "Usage",
+                   "Price", "Due", "Paid", "Unpaid"]
+    widths = [34, 46, 24, 24, 22, 22, 18, 20, 26, 26, 26]
 
     pdf.cell(0, 9, title, new_x="LMARGIN", new_y="NEXT")
     pdf.set_font_size(9)
@@ -859,7 +908,9 @@ def statistics_pdf(type: str = Query("all"), household_id: str = Query(""),
     for x in rows:
         name = x.get("display_name") or x.get("meter_name") or ""
         vals = [x["household_name"], name, x.get("start", ""), x["end"],
-                f"{x['usage']:,}", x["unit_price"], f"{x['amount']:,.2f}"]
+                f"{x['start_value']:,}", f"{x['end_value']:,}", f"{x['usage']:,}",
+                x["unit_price"], f"{x['amount']:,.2f}", f"{x['paid']:,.2f}",
+                f"{x['outstanding']:,.2f}"]
         for val, w in zip(vals, widths):
             pdf.cell(w, 8, str(val)[:30], border=1)
         pdf.ln()

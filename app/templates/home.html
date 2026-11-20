@@ -8,6 +8,17 @@
   <div class="stat"><div class="k">已收合计</div><div class="v">{{ money(total_paid) }}<span class="u"> 元</span></div></div>
   <div class="stat"><div class="k">租户欠款</div><div class="v">{{ money(outstanding_total) }}<span class="u"> 元</span></div></div>
 </div>
+
+<section class="card">
+  <h2>常用操作</h2>
+  <div class="quickrow">
+    <a href="/readings"><span class="mark" aria-hidden="true">✎</span><span>新增抄表<small>记录各计量线本次读数</small></span></a>
+    <a href="/payments"><span class="mark" aria-hidden="true">¥</span><span>新增缴费<small>照部门账单录入</small></span></a>
+    <a href="/ledger"><span class="mark" aria-hidden="true">▤</span><span>收款台账<small>应收、已收与未收</small></span></a>
+    <a href="/statistics"><span class="mark" aria-hidden="true">▥</span><span>统计与查询<small>用量、收费与毛差</small></span></a>
+  </div>
+</section>
+
 {% if not setup_done %}
 <div class="note">
   <b>还没完成初始化,只需三步。</b>
@@ -26,15 +37,15 @@
     {% if balance %}
     <li>预收余额合计 {{ money(balance) }} 元,可用于抵扣后续账期</li>
     {% endif %}
-    <li><a href="#ledger">收款台账</a> — 应收 {{ money(total_due) }},已收 {{ money(total_paid) }}
+    <li><a href="/ledger">收款台账</a> — 应收 {{ money(total_due) }},已收 {{ money(total_paid) }}
       {% if outstanding_total and outstanding_total > 0 %},<span class="tag warn">未收 {{ money(outstanding_total) }}</span>{% endif %}</li>
     <li><a href="/statistics">查看统计与费用</a> — 共 {{ reading_count }} 条抄表记录</li>
   </ul>
 </section>
 
-<section class="card" id="ledger">
+<section class="card">
   <h2>收款台账</h2>
-  <p class="hint">逐户的应收、已收与欠款。点租户名进该户明细。</p>
+  <p class="hint">逐户的应收、已收与未收。点租户名进该户明细,全部账期到「<a href="/ledger">台账</a>」查询。</p>
   <div class="tablewrap">
     <table>
       <thead><tr><th>租户</th><th class="num">应收(元)</th><th class="num">已收(元)</th><th class="num">未收(元)</th><th class="num">预收余额(元)</th><th>状态</th></tr></thead>
@@ -66,6 +77,7 @@
     </table>
   </div>
 </section>
+
 {% if recent %}
 <section class="card">
   <h2>最近账期</h2>
@@ -88,13 +100,5 @@
   </div>
 </section>
 {% endif %}
-<section class="card">
-  <h2>常用操作</h2>
-  <div class="quickrow">
-    <a href="/readings"><span class="mark" aria-hidden="true">✎</span><span>新增抄表<small>记录各计量线本次读数</small></span></a>
-    <a href="/payments"><span class="mark" aria-hidden="true">¥</span><span>新增缴费<small>照部门账单录入</small></span></a>
-    <a href="/statistics"><span class="mark" aria-hidden="true">▤</span><span>统计与查询<small>用量、收费与毛差</small></span></a>
-  </div>
-</section>
 {% endif %}
 {% endblock %}

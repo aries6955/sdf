@@ -17,6 +17,7 @@ from .billing import (
 )
 from .db import connect, get_setting, init_db, set_setting
 from .ledger import (
+    all_ledger_rows,
     all_outstanding,
     household_ledger,
     household_summaries,
@@ -644,6 +645,11 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
         all_readings = [dict(x) for x in detail]
         for x in all_readings:
             x["can_edit"] = readings.editable(conn, x)
+            # 这一期应收:账期以读数为界,止于该读数日期的那一期
+            rec = conn.execute(
+                "SELECT amount FROM receivables WHERE line_id=? AND period_end=?",
+                (x["line_id"], x["reading_date"])).fetchone()
+            x["amount"] = rec["amount"] if rec else None
             # 同一块表的上一条读数,必须按“同一块表”取 —— 换表后旧表读数不能与
             # 新表读数相减,否则会得出一个巨大的负数
             prev = conn.execute(
@@ -866,6 +872,62 @@ def statistics_page(request: Request, type: str = Query("all"), household_id: st
                   paid_total=paid_total,
                   paid_by_type=paid_by_type, margin=margin_value,
                   gaps=gaps, gap_usage=gap_usage)
+
+
+@app.get("/ledger", response_class=HTMLResponse)
+def ledger_page(request: Request, household_id: str = "", type: str = "",
+                status: str = "", date_from: str = "", date_to: str = "",
+                page: int = 1):
+    """台账:全部租户的逐期应收/已收/未收,加收款流水。"""
+    with connect() as conn:
+        households = [dict(x) for x in conn.execute(
+            "SELECT id, name FROM households ORDER BY id")]
+        rows = all_ledger_rows(conn)
+        entries = [dict(x) for x in conn.execute(
+            "SELECT r.*, h.name AS household_name FROM receipts r "
+            "JOIN households h ON h.id = r.household_id "
+            "ORDER BY r.entry_date DESC, r.id DESC")]
+
+    if household_id:
+        hh = _int(household_id)
+        rows = [x for x in rows if x["household_id"] == hh]
+        entries = [x for x in entries if x["household_id"] == hh]
+    if type:
+        rows = [x for x in rows if x["meter_type"] == type]
+    if date_from:
+        rows = [x for x in rows if x["period_end"] >= date_from]
+        entries = [x for x in entries if x["entry_date"] >= date_from]
+    if date_to:
+        rows = [x for x in rows if x["period_end"] <= date_to]
+        entries = [x for x in entries if x["entry_date"] <= date_to]
+    if status == "unpaid":
+        rows = [x for x in rows if x["paid"] <= 0.005]
+    elif status == "partial":
+        rows = [x for x in rows if x["paid"] > 0.005 and not x["settled"]]
+    elif status == "settled":
+        rows = [x for x in rows if x["settled"]]
+    rows.sort(key=lambda x: (x["period_end"], x["household_id"], x["line_id"]),
+              reverse=True)
+
+    sum_due = round(sum(x["amount"] for x in rows), 2)
+    sum_paid = round(sum(x["paid"] for x in rows), 2)
+    sum_outstanding = round(sum(x["outstanding"] for x in rows), 2)
+    net_receipts = round(sum(x["amount"] if x["kind"] == "receipt" else -x["amount"]
+                             for x in entries), 2)
+
+    qs = (f"household_id={household_id}&type={type}&status={status}"
+          f"&date_from={date_from}&date_to={date_to}")
+    page_rows, page, pages, pager = page_slice(rows, len(rows), page, qs)
+
+    return render("ledger.html", title="台账",
+                  lead="应收、已收与未收的逐期明细,以及每一笔收款流水。",
+                  active="ledger", households=households, rows=rows,
+                  page_rows=page_rows, page=page, pages=pages, pager=pager,
+                  entries=entries, net_receipts=net_receipts,
+                  sum_due=sum_due, sum_paid=sum_paid,
+                  sum_outstanding=sum_outstanding,
+                  household_id=household_id, type=type, status=status,
+                  date_from=date_from, date_to=date_to)
 
 
 @app.get("/statistics/pdf")

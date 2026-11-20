@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="card">
+  <h2>查询条件</h2>
+  <p class="hint">逐期的应收、已收与未收。收款记在租户名下,按最早欠账优先自动冲抵,所以"已收"是冲抵后的结果,不是收款日期落在这一期的钱。</p>
+  <form method="get" action="/ledger">
+    <div class="formgrid">
+      <div class="field"><label for="l-hh">租户</label>
+        <select id="l-hh" name="household_id"><option value="">全部租户</option>
+          {% for x in households %}<option value="{{ x.id }}"{% if household_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
+        </select></div>
+      <div class="field"><label for="l-type">类型</label>
+        <select id="l-type" name="type">
+          <option value=""{% if not type %} selected{% endif %}>水 + 电</option>
+          <option value="water"{% if type == 'water' %} selected{% endif %}>只看水</option>
+          <option value="electricity"{% if type == 'electricity' %} selected{% endif %}>只看电</option>
+        </select></div>
+      <div class="field"><label for="l-status">收付状态</label>
+        <select id="l-status" name="status">
+          <option value=""{% if not status %} selected{% endif %}>全部</option>
+          <option value="unpaid"{% if status == 'unpaid' %} selected{% endif %}>未收款</option>
+          <option value="partial"{% if status == 'partial' %} selected{% endif %}>部分收款</option>
+          <option value="settled"{% if status == 'settled' %} selected{% endif %}>已结清</option>
+        </select></div>
+      <div class="field"><label for="l-from">账期起</label><input id="l-from" type="date" name="date_from" value="{{ date_from }}"></div>
+      <div class="field"><label for="l-to">账期止</label><input id="l-to" type="date" name="date_to" value="{{ date_to }}"></div>
+    </div>
+    <div class="actions">
+      <button type="submit">查询</button>
+      <a class="btn ghost" href="/ledger">清除条件</a>
+    </div>
+  </form>
+</section>
+
+<div class="stats">
+  <div class="stat"><div class="k">应收合计</div><div class="v">{{ money(sum_due) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">已收合计</div><div class="v">{{ money(sum_paid) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">未收合计</div><div class="v">{{ money(sum_outstanding) }}<span class="u"> 元</span></div></div>
+  <div class="stat"><div class="k">账期数</div><div class="v">{{ rows|length }}<span class="u"> 期</span></div></div>
+</div>
+
+<section class="card">
+  <h2>台账明细 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
+  <p class="hint">按账期止倒序,最近的在上。</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>租户</th><th>类型</th><th>线名</th><th>账期</th><th class="num">用量</th><th class="num">单价</th><th class="num">应收(元)</th><th class="num">已收(元)</th><th class="num">未收(元)</th><th>状态</th></tr></thead>
+      <tbody>
+        {% if not page_rows %}<tr><td colspan="10" class="empty">没有符合条件的账期。</td></tr>{% endif %}
+        {% for x in page_rows %}
+        <tr>
+          <td><a href="/households/{{ x.household_id }}/ledger">{{ x.household_name }}</a></td>
+          <td><span class="tag muted">{{ type_name(x.meter_type) }}</span></td>
+          <td>{{ x.meter_name or x.label or '—' }}</td>
+          <td>{{ x.period_start }} ~ {{ x.period_end }}</td>
+          <td class="num">{{ '{:,}'.format(x.usage) }}</td>
+          <td class="num">{{ x.unit_price }}</td>
+          <td class="num">{{ money(x.amount) }}</td>
+          <td class="num">{{ money(x.paid) }}</td>
+          <td class="num">{{ money(x.outstanding) }}</td>
+          <td>
+            {% if x.settled %}<span class="tag ok">已结清</span>
+            {% elif x.partial %}<span class="tag warn">部分收款</span>
+            {% else %}<span class="tag warn">未收款</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if page_rows %}
+      <tfoot>
+        <tr>
+          <th colspan="4">本页合计</th>
+          <th class="num">{{ '{:,}'.format(page_rows|sum(attribute='usage')) }}</th>
+          <th></th>
+          <th class="num">{{ money(page_rows|sum(attribute='amount')) }}</th>
+          <th class="num">{{ money(page_rows|sum(attribute='paid')) }}</th>
+          <th class="num">{{ money(page_rows|sum(attribute='outstanding')) }}</th>
+          <th></th>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+  {{ pager | safe }}
+</section>
+
+<section class="card">
+  <h2>收款流水</h2>
+  <p class="hint">按登记时间倒序。收款不绑定某一期账单,冲抵顺序由系统推出来。</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>日期</th><th>租户</th><th>类型</th><th class="num">金额(元)</th><th>备注</th></tr></thead>
+      <tbody>
+        {% if not entries %}<tr><td colspan="5" class="empty">没有符合条件的收款记录。</td></tr>{% endif %}
+        {% for e in entries %}
+        <tr>
+          <td>{{ e.entry_date }}</td>
+          <td><a href="/households/{{ e.household_id }}/ledger">{{ e.household_name }}</a></td>
+          <td>{% if e.kind == 'receipt' %}<span class="tag ok">收款</span>{% else %}<span class="tag warn">退款</span>{% endif %}</td>
+          <td class="num">{{ money(e.amount) }}</td>
+          <td class="wrap">{{ e.note or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if entries %}
+      <tfoot>
+        <tr>
+          <th colspan="3">合计 {{ entries|length }} 笔(净额)</th>
+          <th class="num">{{ money(net_receipts) }}</th>
+          <th></th>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</section>
+{% endblock %}

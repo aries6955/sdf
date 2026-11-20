@@ -160,6 +160,16 @@ def household_summaries(conn) -> list[dict]:
             for led in [household_ledger(conn, h["id"])]]
 
 
+def all_ledger_rows(conn) -> list[dict]:
+    """全部租户的逐期台账:每个账期一行,带冲抵结果与租户名。
+
+    冲抵仍只在 household_ledger 里做一次,这里只把各户的行展平,不另算。
+    """
+    return [{**x, "household_id": h["id"], "household_name": h["name"]}
+            for h in conn.execute("SELECT id, name FROM households ORDER BY id")
+            for x in household_ledger(conn, h["id"])["rows"]]
+
+
 def tenant_due(conn, meter_type: str = None, household_id: int = None,
                date_from: str = "", date_to: str = "") -> float:
     """向租户应收:账期金额之和。这是房东向租户开出的钱。"""

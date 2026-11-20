@@ -23,7 +23,6 @@ from .ledger import (
     household_summaries,
     margin_from,
     paid_for,
-    paid_periods,
     paid_to_utility,
     settled_periods,
     totals,
@@ -648,11 +647,15 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
             rparams + [PAGE_SIZE, (page - 1) * PAGE_SIZE]).fetchall()
 
         all_readings = [dict(x) for x in detail]
+        # 每期的已收与欠款只从 settled_periods 取 —— 与台账、统计页同一份事实。
+        # 注意不能用 paid_periods:它的语义是"收到过钱",部分收款也会命中,
+        # 拿它当"收齐`会让部分收款的行失去收款入口。
+        settled_rows = settled_periods(conn)
         for x in all_readings:
             x["can_edit"] = readings.editable(conn, x)
-            # 该期是否已收到钱:与锁定规则同一处口径(先欠先冲后落在这一期上的钱)
-            x["settled"] = any(p["end"] == x["reading_date"]
-                                for p in paid_periods(conn, x["household_id"]))
+            s = settled_rows.get((x["line_id"], x["reading_date"]))
+            x["settled"] = s["settled"] if s else False
+            x["outstanding"] = s["outstanding"] if s else None
             # 这一期应收:账期以读数为界,止于该读数日期的那一期
             rec = conn.execute(
                 "SELECT amount FROM receivables WHERE line_id=? AND period_end=?",
@@ -982,10 +985,17 @@ def statistics_pdf(type: str = Query("all"), household_id: str = Query(""),
     for head, w in zip(headers, widths):
         pdf.cell(w, 8, head, border=1, align="C")
     pdf.ln()
+    def _reading(value, r1, r2, r3):
+        # 三相表在读数后附分相,与页面上的展示一致;单相只有合计
+        head = f"{value:,}"
+        return f"{head} {r1}/{r2}/{r3}" if r1 is not None else head
+
     for x in rows:
         name = x.get("display_name") or x.get("meter_name") or ""
         vals = [x["household_name"], name, x.get("start", ""), x["end"],
-                f"{x['start_value']:,}", f"{x['end_value']:,}", f"{x['usage']:,}",
+                _reading(x["start_value"], x["start_r1"], x["start_r2"], x["start_r3"]),
+                _reading(x["end_value"], x["end_r1"], x["end_r2"], x["end_r3"]),
+                f"{x['usage']:,}",
                 x["unit_price"], f"{x['amount']:,.2f}", f"{x['paid']:,.2f}",
                 f"{x['outstanding']:,.2f}"]
         for val, w in zip(vals, widths):

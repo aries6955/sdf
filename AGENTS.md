@@ -2,7 +2,9 @@
 
 ## 完成标准
 
-改完代码跑 `uv run python scripts/check.py`,全部通过才算完成。单跑 pytest 会漏掉未使用 import、死变量与行内多语句。
+改完代码跑 `uv run python scripts/check.py`(ruff + `node --check` + pytest),全部通过才算完成。单跑 pytest 会漏掉未使用 import、死变量与行内多语句。
+
+一次性脚本也一律 `uv run python -`,裸 `python` 会落到系统解释器,报 `ModuleNotFoundError`。
 
 ## 进程纪律
 
@@ -10,6 +12,9 @@
 
 - 停服务 `uv run python scripts/stop_server.py <端口>`;开发期用 `--reload` 起,改代码后必须重启
 - 无头截图用 `scripts/shot.py`(独立 `--user-data-dir`,只结束自己的 PID)
+- 要看登录后的页面:`uv run python scripts/dump_page.py /readings --shot`
+  (带登录态、内联样式与 JS;`--click 'button[data-edit]'` 可验证靠 JS 展开的状态)。
+  Git Bash 下加 `MSYS_NO_PATHCONV=1`,否则 `/readings` 会被转成 Windows 路径
 
 ## 改前先读
 

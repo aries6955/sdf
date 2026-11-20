@@ -167,7 +167,8 @@
                 <input type="hidden" name="entry_date" value="{{ today }}">
                 <input type="hidden" name="back" value="/readings?line_id={{ line_id }}&household_id={{ household_id }}&date_from={{ date_from }}&date_to={{ date_to }}&page={{ page }}">
                 <input type="number" step="0.01" name="amount" required
-                       value="{{ '%.2f'|format(x.amount) }}" aria-label="收款金额" title="本期应收,可改">
+                       value="{{ '%.2f'|format(x.outstanding if x.outstanding is not none and x.outstanding > 0.005 else x.amount) }}"
+                       aria-label="收款金额" title="本期未收,可改">
                 <button class="small" type="submit">收款</button>
               </form>
               {% endif %}
@@ -196,7 +197,7 @@
       tr.classList.toggle('is-editing', on);
       tr.querySelectorAll('.view').forEach(function(x){ x.hidden = on; });
       tr.querySelectorAll('.editonly').forEach(function(x){ x.hidden = !on; });
-      if(on){ var i=tr.querySelector('input.editonly'); if(i) i.focus(); }
+      if(on){ var i=tr.querySelector('input.editonly'); if(i) i.focus({preventScroll:true}); }
     }
     t.addEventListener('click', function(e){
       var b=e.target.closest('button[data-edit]');

@@ -96,7 +96,17 @@ motion:
 
 - 成功/错误提示条放页面头下方,左边 3px 语义色,带 `role="status"`。
 - 空状态:表格内居中一句弱文字,不用插图。
-- 危险操作(清空数据、删除)必须 `confirm()`。
+- 危险操作(清空数据、删除、撤回)必须二次确认。用页面内的确认卡片:表单上加
+  `data-confirm="要问用户的话"`,`static/confirm.js` 会自动接管并居中弹出。
+  **不要用浏览器原生 `confirm()`** —— 它弹在页面顶部、样式无法控制。
+  `.confirmwrap` 遮罩 + `.confirmbox` 卡片,危险操作顶部 3px 红边,
+  Esc/点遮罩取消,Enter 确认。
+- 行内快捷收款 `table .quickpay`:一个金额框 + 一个按钮,金额框默认填未收金额,
+  右对齐等宽数字,宽 82px。已收齐的行不给入口。
+- 就地编辑 `tr.is-editing`:点"修改"只在该行把 `.view` 隐藏、`.editonly` 显示,
+  不重载页面;输入框用 `form="…"` 属性挂到行尾的 `<form>`,因而保持在表格布局里。
+  未选中时 `.editonly` 一律 `hidden`,靠 `[hidden]{display:none!important}` 保证不被
+  flex 布局覆盖。
 
 ### Data Display
 

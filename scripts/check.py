@@ -6,6 +6,9 @@
 
 import subprocess
 import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def run(args: list[str]) -> int:
@@ -14,8 +17,11 @@ def run(args: list[str]) -> int:
 
 
 def main() -> int:
+    js = sorted(str(p.relative_to(ROOT)) for p in (ROOT / "app/static").glob("*.js"))
     steps = [
         ["uv", "run", "ruff", "check", "app", "tests", "scripts"],
+        # 模板里的内联脚本验不了,但 static/*.js 能手写错 —— node --check 零依赖
+        *[["node", "--check", f] for f in js],
         ["uv", "run", "pytest", "-q"],
     ]
     for step in steps:

@@ -160,3 +160,28 @@ def test_confirm_is_a_card_not_browser_dialog(client):
     assert 'data-confirm="撤回这条抄表?前后账期会重算。"' in html
     assert "return confirm(" not in html
     assert "/static/confirm.js" in html
+
+
+def test_partial_payment_keeps_receipt_entry_on_every_page(client):
+    """部分收款不算收齐:三个页面都要留收款入口,默认金额是剩余未收。
+
+    这是实测出来的真回归 —— 抄表页曾用 paid_periods 判定,它的语义是"收到过钱",
+    部分收款也命中,于是快捷收款消失、余款只能绕去台账页收。
+    """
+    from tests.conftest import _add, _add_meter, _move_in
+    _add_meter(client, "分水A", base="100")
+    _move_in(client, "甲", [("分水A", 100, 5)])
+    _add(client, "分水A", "2025-02-01", 130)          # 应收 150
+    client.post("/receipts/add", data={"household_id": "1", "entry_date": "2025-02-05",
+                                       "amount": "50"})   # 只收 50
+
+    readings = client.get("/readings").text
+    assert 'class="quickpay"' in readings, "抄表页仍要能收余款"
+    assert 'value="100.00"' in readings, "默认金额是剩余未收 150-50"
+
+    ledger = client.get("/ledger").text
+    assert 'class="quickpay"' in ledger
+    assert "已收齐" not in ledger, "部分收款不是收齐"
+
+    stats = client.get("/statistics").text
+    assert "部分收款" in stats

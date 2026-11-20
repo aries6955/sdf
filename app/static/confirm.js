@@ -44,7 +44,7 @@
     box.querySelector('[data-cancel]').addEventListener('click', close);
     box.addEventListener('click', function (e) { if (e.target === box) { close(); } });
     document.addEventListener('keydown', onKey);
-    box.querySelector('[data-ok]').focus();
+    box.querySelector('[data-ok]').focus({preventScroll: true});
   }
 
   document.addEventListener('submit', function (e) {

@@ -265,6 +265,16 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.wrap, th.wrap { white-space: normal; min-width: 150px; }
 .empty { text-align: center; color: var(--muted); padding: 28px 12px; font-size: 12.5px; }
 tr.editrow > td { background: var(--brand-soft); padding: 12px; }
+/* 行内就地编辑:未进入编辑态的输入框一律不占位 */
+[hidden] { display: none !important; }
+tr.is-editing > td { background: var(--brand-soft); }
+tr.is-editing .rowactions { flex-wrap: wrap; }
+/* 行内快捷收款:一个金额框 + 一个按钮 */
+.quickpay { display: inline-flex; gap: 4px; align-items: center; margin: 0; }
+.quickpay input[type="number"] {
+  width: 82px; padding: 2px 6px; font-size: 11.5px;
+  text-align: right; font-variant-numeric: tabular-nums;
+}
 /* 行内编辑:auto-fit 铺满可用宽度,只在真放不下时才换行 */
 tr.editrow .formgrid { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 @media (max-width: 620px) { tr.editrow .formgrid { grid-template-columns: 1fr; } }

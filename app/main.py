@@ -23,6 +23,7 @@ from .ledger import (
     household_summaries,
     margin_from,
     paid_for,
+    paid_periods,
     paid_to_utility,
     settled_periods,
     totals,
@@ -320,28 +321,32 @@ def household_ledger_page(request: Request, household_id: int, msg: str = "", ok
 
 @app.post("/receipts/add")
 def receipt_add(household_id: int = Form(...), entry_date: str = Form(...),
-                amount: str = Form(...), kind: str = Form("receipt"), note: str = Form("")):
+                amount: str = Form(...), kind: str = Form("receipt"), note: str = Form(""),
+                back: str = Form("")):
+    """登记收款/退款。back 是跳回路径,台账页与单户台账共用这一个入口。"""
+    dest = back if back.startswith("/") else f"/households/{household_id}/ledger"
     value = _float(amount)
     if value is None or value <= 0:
-        return go(f"/households/{household_id}/ledger", msg="金额要大于 0")
+        return go(dest, msg="金额要大于 0")
     kind = kind if kind in ("receipt", "refund") else "receipt"
     with connect() as conn:
         conn.execute(
             "INSERT INTO receipts(household_id,entry_date,amount,kind,note) VALUES (?,?,?,?,?)",
             (household_id, entry_date, round(value, 2), kind, note.strip()))
     label = "收款" if kind == "receipt" else "退款"
-    return go(f"/households/{household_id}/ledger", ok=f"{label}已登记")
+    return go(dest, ok=f"{label}已登记")
 
 
 @app.post("/receipts/delete")
-def receipt_delete(id: int = Form(...)):
+def receipt_delete(id: int = Form(...), back: str = Form("")):
     with connect() as conn:
         row = conn.execute("SELECT household_id FROM receipts WHERE id=?", (id,)).fetchone()
         if not row:
             return go("/households", msg="记录不存在")
         conn.execute("DELETE FROM receipts WHERE id=?", (id,))
         hh = row["household_id"]
-    return go(f"/households/{hh}/ledger", ok="已删除该收款记录,账期随之解锁")
+    dest = back if back.startswith("/") else f"/households/{hh}/ledger"
+    return go(dest, ok="已删除该收款记录,账期随之解锁")
 
 
 @app.post("/households/add")
@@ -645,6 +650,9 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
         all_readings = [dict(x) for x in detail]
         for x in all_readings:
             x["can_edit"] = readings.editable(conn, x)
+            # 该期是否已收到钱:与锁定规则同一处口径(先欠先冲后落在这一期上的钱)
+            x["settled"] = any(p["end"] == x["reading_date"]
+                                for p in paid_periods(conn, x["household_id"]))
             # 这一期应收:账期以读数为界,止于该读数日期的那一期
             rec = conn.execute(
                 "SELECT amount FROM receivables WHERE line_id=? AND period_end=?",
@@ -653,11 +661,16 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
             # 同一块表的上一条读数,必须按“同一块表”取 —— 换表后旧表读数不能与
             # 新表读数相减,否则会得出一个巨大的负数
             prev = conn.execute(
-                "SELECT value, reading_date FROM readings WHERE meter_id=? AND id<>? "
+                "SELECT value, r1, r2, r3, reading_date FROM readings "
+                "WHERE meter_id=? AND id<>? "
                 "AND reading_date <= ? ORDER BY reading_date DESC, id DESC LIMIT 1",
                 (x["meter_id"], x["id"], x["reading_date"])).fetchone()
             x["prev_value"] = prev["value"] if prev else None
             x["prev_date"] = prev["reading_date"] if prev else None
+            # 三相表要把上期的分相也带出来,否则只看到一个合计,无法核对
+            x["prev_r1"] = prev["r1"] if prev else None
+            x["prev_r2"] = prev["r2"] if prev else None
+            x["prev_r3"] = prev["r3"] if prev else None
     return render("readings.html", title="抄表",
                   lead="记录各计量线的读数。抄表即当场算出该账期的应收。",
                   active="readings", lines=lines_sorted, all_lines=all_lines,
@@ -924,6 +937,8 @@ def ledger_page(request: Request, household_id: str = "", type: str = "",
                   active="ledger", households=households, rows=rows,
                   page_rows=page_rows, page=page, pages=pages, pager=pager,
                   entries=entries, net_receipts=net_receipts,
+                  today=date.today().isoformat(),
+                  qs=qs,
                   sum_due=sum_due, sum_paid=sum_paid,
                   sum_outstanding=sum_outstanding,
                   household_id=household_id, type=type, status=status,

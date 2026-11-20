@@ -28,8 +28,8 @@
         </div>
         <span class="assist" id="phaseSum">合计:—</span></div>
       <div class="field"><label for="r-price">租户单价</label>
-        <input id="r-price" type="number" step="0.0001" name="tenant_price" placeholder="留空=沿用上次">
-        <span class="assist">房东向租户收取的单价,整段生效</span></div>
+        <input id="r-price" type="number" step="0.0001" name="tenant_price" value="{{ lines[0].last_price }}">
+        <span class="assist">房东向租户收取的单价,整段生效;默认沿用上次,可直接改</span></div>
       <div class="field"><label for="r-note">备注</label><input id="r-note" name="note" placeholder="选填"></div>
     </div>
     <div class="actions"><button type="submit">保存抄表</button></div>
@@ -68,7 +68,7 @@
     }
     lineSel.addEventListener('change',function(){
       var o=lineSel.options[lineSel.selectedIndex];
-      price.placeholder='留空=沿用上次 '+(o.dataset.price||'0');
+      price.value=o.dataset.price||'';
       syncMeters();
     });
     meterSel.addEventListener('change',syncPhase);
@@ -111,70 +111,98 @@
   <h2>读数记录 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
   <p class="hint">读数分「入住 / 抄表 / 退租 / 换表」四类。<b>已开始收款的账期不能改读数</b>,要改先删对应收款。</p>
   <div class="tablewrap">
-    <table>
+    <table id="readingsTable">
       <thead><tr><th>租户</th><th>类型</th><th>表</th><th>日期</th><th class="num">上期读数</th><th class="num">本次读数</th><th class="num">用量</th><th class="num">单价</th><th class="num">金额(元)</th><th>类别</th><th>操作</th></tr></thead>
       <tbody>
         {% if not detail %}<tr><td colspan="11" class="empty">没有符合条件的读数记录。</td></tr>{% endif %}
         {% for x in detail %}
-        {% if edit == x.id and x.can_edit %}
-        <tr class="editrow" id="r{{ x.id }}"><td colspan="11">
-          <form method="post" action="/readings/edit">
-            <input type="hidden" name="id" value="{{ x.id }}">
-            <input type="hidden" name="line_id" value="{{ line_id }}">
-            <input type="hidden" name="household_id" value="{{ household_id }}">
-            <input type="hidden" name="date_from" value="{{ date_from }}">
-            <input type="hidden" name="date_to" value="{{ date_to }}">
-            <input type="hidden" name="page" value="{{ page }}">
-            <div class="formgrid">
-              <div class="field"><label for="ed-meter-{{ x.id }}">表</label>
-                <input id="ed-meter-{{ x.id }}" value="{{ x.meter_name }}" disabled></div>
-              <div class="field"><label for="ed-date-{{ x.id }}">日期</label>
-                <input id="ed-date-{{ x.id }}" type="date" name="reading_date" value="{{ x.reading_date }}" required></div>
-              {% if x.phase == 'three' %}
-              <div class="field" role="group" aria-labelledby="edPhaseLbl-{{ x.id }}">
-                <span class="fieldlabel" id="edPhaseLbl-{{ x.id }}">三相读数</span>
-                <div class="phase3">
-                  <input type="number" name="value_1" value="{{ x.r1 }}" required aria-label="A 相">
-                  <input type="number" name="value_2" value="{{ x.r2 }}" required aria-label="B 相">
-                  <input type="number" name="value_3" value="{{ x.r3 }}" required aria-label="C 相">
-                </div></div>
-              {% else %}
-              <div class="field"><label for="ed-value-{{ x.id }}">读数</label>
-                <input id="ed-value-{{ x.id }}" type="number" name="value" value="{{ x.value }}" required></div>
-              {% endif %}
-              <div class="field"><label for="ed-price-{{ x.id }}">租户单价</label>
-                <input id="ed-price-{{ x.id }}" type="number" step="0.0001" name="tenant_price" value="{{ x.tenant_price }}"></div>
-            </div>
-            <div class="actions"><button type="submit">保存修改</button><a class="btn ghost" href="/readings?line_id={{ line_id }}&household_id={{ household_id }}&date_from={{ date_from }}&date_to={{ date_to }}&page={{ page }}#r{{ x.id }}">取消</a></div>
-          </form>
-        </td></tr>
-        {% else %}
         <tr id="r{{ x.id }}">
           <td>{{ x.household_name }}</td>
           <td><span class="tag muted">{{ type_name(x.meter_type) }}</span>{% if x.label %} {{ x.label }}{% endif %}</td>
           <td>{{ x.meter_name }}</td>
-          <td>{{ x.reading_date }}</td>
-          <td class="num">{{ '{:,}'.format(x.prev_value) if x.prev_value is not none else '—' }}</td>
-          <td class="num">{{ '{:,}'.format(x.value) }}{% if x.r1 is not none %} <span class="tag muted">{{ x.r1 }}/{{ x.r2 }}/{{ x.r3 }}</span>{% endif %}</td>
-          <td class="num">{{ '{:,}'.format(x.value - x.prev_value) if x.prev_value is not none else '—' }}</td>
-          <td class="num">{{ x.tenant_price }}</td>
+          <td>
+            <span class="view">{{ x.reading_date }}</span>
+            {% if x.can_edit %}<input class="editonly" form="ed-{{ x.id }}" type="date" name="reading_date" value="{{ x.reading_date }}" required hidden aria-label="抄表日期">{% endif %}
+          </td>
+          <td class="num"><span class="view">{{ '{:,}'.format(x.prev_value) if x.prev_value is not none else '—' }}{% if x.prev_r1 is not none %} <span class="tag muted">{{ x.prev_r1 }}/{{ x.prev_r2 }}/{{ x.prev_r3 }}</span>{% endif %}</span></td>
+          <td class="num">
+            <span class="view">{{ '{:,}'.format(x.value) }}{% if x.r1 is not none %} <span class="tag muted">{{ x.r1 }}/{{ x.r2 }}/{{ x.r3 }}</span>{% endif %}</span>
+            {% if x.can_edit %}
+              {% if x.phase == 'three' %}
+              <span class="editonly phase3" hidden>
+                <input form="ed-{{ x.id }}" type="number" name="value_1" value="{{ x.r1 }}" required aria-label="A 相">
+                <input form="ed-{{ x.id }}" type="number" name="value_2" value="{{ x.r2 }}" required aria-label="B 相">
+                <input form="ed-{{ x.id }}" type="number" name="value_3" value="{{ x.r3 }}" required aria-label="C 相">
+              </span>
+              {% else %}
+              <input class="editonly" form="ed-{{ x.id }}" type="number" name="value" value="{{ x.value }}" required hidden aria-label="读数">
+              {% endif %}
+            {% endif %}
+          </td>
+          <td class="num"><span class="view">{{ '{:,}'.format(x.value - x.prev_value) if x.prev_value is not none else '—' }}</span></td>
+          <td class="num">
+            <span class="view">{{ x.tenant_price }}</span>
+            {% if x.can_edit %}<input class="editonly" form="ed-{{ x.id }}" type="number" step="0.0001" name="tenant_price" value="{{ x.tenant_price }}" hidden aria-label="租户单价">{% endif %}
+          </td>
           <td class="num">{{ money(x.amount) if x.amount is not none else '—' }}</td>
           <td>{% if x.kind == 'periodic' %}<span class="tag ok">抄表</span>{% else %}<span class="tag warn">{{ kind_name(x.kind) }}</span>{% endif %}</td>
           <td>
             <div class="rowactions">
-              {% if x.can_edit %}<a class="btn ghost small" href="/readings?edit={{ x.id }}&line_id={{ line_id }}&household_id={{ household_id }}&date_from={{ date_from }}&date_to={{ date_to }}&page={{ page }}#r{{ x.id }}">修改</a>{% endif %}
+              {% if x.can_edit %}
+              <button class="ghost small view" type="button" data-edit>修改</button>
+              <button class="small editonly" type="submit" form="ed-{{ x.id }}" hidden>保存</button>
+              <button class="ghost small editonly" type="button" data-cancel hidden>取消</button>
+              {% endif %}
               {% if x.kind == 'periodic' and x.can_edit %}
               <form method="post" action="/readings/delete" onsubmit="return confirm('撤回这条抄表?前后账期会重算。')">
-                <input type="hidden" name="id" value="{{ x.id }}"><button class="danger small" type="submit">撤回</button></form>
+                <input type="hidden" name="id" value="{{ x.id }}"><button class="danger small view" type="submit">撤回</button></form>
+              {% endif %}
+              {% if x.amount and x.amount > 0.005 and not x.settled %}
+              <form method="post" action="/receipts/add" class="quickpay">
+                <input type="hidden" name="household_id" value="{{ x.household_id }}">
+                <input type="hidden" name="kind" value="receipt">
+                <input type="hidden" name="entry_date" value="{{ today }}">
+                <input type="hidden" name="back" value="/readings?line_id={{ line_id }}&household_id={{ household_id }}&date_from={{ date_from }}&date_to={{ date_to }}&page={{ page }}">
+                <input type="number" step="0.01" name="amount" required
+                       value="{{ '%.2f'|format(x.amount) }}" aria-label="收款金额" title="本期应收,可改">
+                <button class="small" type="submit">收款</button>
+              </form>
               {% endif %}
             </div>
+            {% if x.can_edit %}
+            <form id="ed-{{ x.id }}" method="post" action="/readings/edit">
+              <input type="hidden" name="id" value="{{ x.id }}">
+              <input type="hidden" name="line_id" value="{{ line_id }}">
+              <input type="hidden" name="household_id" value="{{ household_id }}">
+              <input type="hidden" name="date_from" value="{{ date_from }}">
+              <input type="hidden" name="date_to" value="{{ date_to }}">
+              <input type="hidden" name="page" value="{{ page }}">
+            </form>
+            {% endif %}
           </td>
         </tr>
-        {% endif %}
         {% endfor %}
       </tbody>
     </table>
   </div>
+  <script>
+  (function(){
+    var t=document.getElementById('readingsTable');
+    if(!t) return;
+    function toggle(tr, on){
+      tr.classList.toggle('is-editing', on);
+      tr.querySelectorAll('.view').forEach(function(x){ x.hidden = on; });
+      tr.querySelectorAll('.editonly').forEach(function(x){ x.hidden = !on; });
+      if(on){ var i=tr.querySelector('input.editonly'); if(i) i.focus(); }
+    }
+    t.addEventListener('click', function(e){
+      var b=e.target.closest('button[data-edit]');
+      if(b){ toggle(b.closest('tr'), true); return; }
+      var c=e.target.closest('button[data-cancel]');
+      if(c){ toggle(c.closest('tr'), false); }
+    });
+  })();
+  </script>
   {{ pager | safe }}
 </section>
 {% endblock %}

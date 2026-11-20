@@ -39,7 +39,7 @@
           <td class="num">{{ money(led.balance) if led else '0.00' }}</td>
           <td>
             <div class="rowactions">
-              <a class="btn ghost small" href="/households/{{ x.id }}/ledger">台账</a>
+              <a class="btn ghost small" href="/households/{{ x.id }}/ledger">收费</a>
               <a class="btn ghost small" href="/households?edit={{ x.id }}">修改</a>
               {% if line_counts.get(x.id) %}
               <a class="btn ghost small" href="/households/{{ x.id }}/ledger#checkout">退租</a>

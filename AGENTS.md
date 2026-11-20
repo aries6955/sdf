@@ -1,53 +1,34 @@
 # AGENTS.md
 
-## 操作纪律
+## 完成标准
 
-### 完成标准:检查全过
+改完任何代码运行 `uv run python scripts/check.py`(ruff + pytest),全部通过才算完成。
+单跑 `uv run pytest -q` 会漏掉未使用 import、死变量与行内多语句。
 
-改完任何代码后运行 `uv run python scripts/check.py`(ruff 静态检查 + pytest),全部通过才算完成;
-有失败先修复再报告。只跑 `uv run pytest -q` 会漏掉未使用的 import、死变量与行内多语句。
+## 进程纪律
 
-### 改完代码必须重启服务
+**只结束自己启动的进程**,按 PID 或端口精确停;不按进程名匹配。
 
-改 `.py`/模板/CSS 后,运行中的 uvicorn 不会自动加载旧进程外的新代码。
-开发期一律用 `--reload` 启动;若服务已是旧进程,先 `uv run python scripts/stop_server.py <端口>` 按 PID 停,再重启。
+- 停服务:`uv run python scripts/stop_server.py <端口>`
+- 启动服务:后台起并记下 PID,开发期用 `--reload`。改 `.py`/模板/CSS 后必须重启,旧进程不会加载新代码。
+- 无头截图:`scripts/shot.py`,它用独立 `--user-data-dir` 的一次性实例,只结束自己的 PID。
 
-### 不要按进程名杀浏览器
+## 领域与 UI
 
-**禁止** `taskkill /F /IM msedge.exe`、`killall chrome` 这类按进程名终止的命令 ——
-会把用户正在使用的整个浏览器连同所有标签页一起关掉。
-
-需要无头浏览器截图时,用 `scripts/shot.py`:它使用独立 `--user-data-dir` 启动一次性实例,
-只结束自己启动的进程。同理,任何“顺带清理”都不得越界到用户的其他进程。
-
-### 起停服务只动自己的进程
-
-启动项目用后台方式并记下 PID;停止时按 PID 结束,不要用 `taskkill /IM uvicorn.exe` 这类模糊匹配。
+- 改计费或账务逻辑前先读 `GLOSSARY.md` 与相关 `docs/adr/`。两条硬约束:归属只来自租期(`ADR-0012`)、
+  账期沿计量线连续且换表不切断(`ADR-0014`)——绕开就会重新引入双份归属或账单被拆成两张。
+- 改 HTML/CSS/文案前先读 `DESIGN.md`(token、组件配方、措辞规则);新增页面照它的配方做。
 
 ## Agent skills
 
-### Issue tracker
+- Issue tracker:spec 与 issues 是 `.scratch/<feature-slug>/` 下的 markdown,无远程 tracker。
+  见 `docs/agents/issue-tracker.md`
+- Triage labels:五个角色,标签串与角色名相同。见 `docs/agents/triage-labels.md`
+- Domain docs:单上下文,`GLOSSARY.md` + `docs/adr/`。见 `docs/agents/domain.md`
 
-Issues and specs live as markdown files under `.scratch/<feature-slug>/` in this repo (no remote tracker). See `docs/agents/issue-tracker.md`.
+## 派子代理
 
-### Triage labels
+审查用 `reviewer`、实现用 `worker`、探索用 `scout`。`claude-code`/`codex-exec` 是外部 CLI profile,
+要求本机装了对应命令,不是 Pi 子代理。
 
-Five canonical roles, label strings equal to role names: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
-
-改计费或账务逻辑前,**先读 `GLOSSARY.md`**,再读相关的 `docs/adr/`:
-模型的两条硬约束是「归属只来自租期」(`ADR-0012`)与「账期沿计量线连续、换表不切断」(`ADR-0014`),
-绕开它们就会重新引入双份归属或账单被拆成两张的那类缺陷。
-
-### UI design contract
-
-改任何 HTML/CSS/文案前先读 `DESIGN.md`(token、组件配方、措辞规则、Do's & Don'ts);新增页面照它的配方做。
-
-### 派子代理
-
-审查用 `reviewer`、实现用 `worker`、探索用 `scout`;`claude-code`/`codex-exec` 是外部 CLI profile,
-要求本机装了对应命令,不是 Pi 子代理。要审已提交的 diff,先把 `git diff` 落成文件再给它路径——
-`reviewer` 没有 shell,`watchdog_diff` 也不读提交区间。
+`reviewer` 没有 shell,`watchdog_diff` 也不读提交区间:要审已提交的 diff,先把 `git diff` 落成文件再给它路径。

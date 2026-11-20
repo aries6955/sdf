@@ -1,7 +1,8 @@
 # 深化核心模块:读数录入、账期派生、台账口径
 
-> **状态:已实施**。`uv run python scripts/check.py` 全过(72 passed);服务在 8000 端口实测通过
+> **状态:已实施**。`uv run python scripts/check.py` 全过(73 passed);服务在 8000 端口实测通过
 > 抄表与补录两条端到端路径。七张票中六张完成、`05` 核实后按 wontfix 关闭。
+> 双轴独立审查已跑(结论 OK with notes),其发现的毛差筛选口径回归已修正。
 
 ## Problem Statement
 

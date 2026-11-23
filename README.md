@@ -22,21 +22,22 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 docker run -d --name sdf --restart unless-stopped \
   -p 8536:8536 \
   -e SDF_PASSWORD='你的密码' \
-  -v sdf-data:/data \
+  -v /root/sdf-data:/data \
   ghcr.io/aries6955/sdf:latest
 ```
 
 访问 `http://<服务器IP>:8536`。`SDF_PASSWORD` 不设则用 `admin123`,登录后到「设置」改。
-数据都在命名卷 `sdf-data` 里(`data.sqlite3`、`password.txt`、`backups/`),删容器重建不丢。
+数据落在宿主 `/root/sdf-data`(容器内的 `/data`),删容器重建不丢。
+换目录就改 `-v` 左边那一段,容器内始终是 `/data`。
 
-仓库里的 `docker-compose.yml` 是等价的写法,只有想用 compose 时才需要把它拷到服务器:
+仓库里的 `docker-compose.yml` 是等价写法,想用 compose 才需要拷这一个文件:
 
 ```bash
-docker compose up -d
+docker compose up -d                      # 默认挂 /root/sdf-data
+SDF_DATA=/opt/sdf docker compose up -d    # 换到别的目录
 ```
 
-想直接看数据文件:`docker cp sdf:/data ./data`;或者把卷换成目录挂载
-(`-v /opt/sdf-data:/data`,先 `chown 10001 /opt/sdf-data`)。
+容器以 root 运行,所以宿主目录不需要提前 `chown`。
 
 ## 检查
 

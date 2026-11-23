@@ -12,8 +12,7 @@ FROM python:3.12-slim
 # 文泉驿正黑:PDF 导出需要中文字体(约 16MB);时区用 POSIX 写法,省掉 tzdata
 RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-wqy-zenhei \
- && rm -rf /var/lib/apt/lists/* \
- && useradd -m -u 10001 sdf && mkdir -p /data && chown sdf /data
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY app /app/app
@@ -21,7 +20,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     SDF_DATA_DIR=/data \
     TZ=CST-8 \
     PYTHONUNBUFFERED=1
-USER sdf
 VOLUME /data
 EXPOSE 8536
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8536"]

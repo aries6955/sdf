@@ -9,10 +9,8 @@ services:
       # 首次登录密码;改成自己的。不设则用 admin123,登录后请在「设置」里改
       SDF_PASSWORD: ${SDF_PASSWORD:-admin123}
       # 忘密恢复入口:不设就没有这条后门,设了请用长随机串
-      # SDF_SUPER_PASSWORD: 
+      # SDF_SUPER_PASSWORD:
       TZ: CST-8
     volumes:
-      - sdf-data:/data
-
-volumes:
-  sdf-data:
+      # 宿主 ${SDF_DATA:-/root/sdf-data} 挂到容器的 /data;换目录改环境变量或这里
+      - ${SDF_DATA:-/root/sdf-data}:/data

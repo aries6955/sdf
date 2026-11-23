@@ -18,3 +18,4 @@ backups/
 
 # 含 R2 密钥与登录密码
 .env
+data/

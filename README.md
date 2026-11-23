@@ -17,40 +17,53 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 三层,优先级从高到低:
 
-1. `/data/password.txt`(宿主 `/root/sdf-data/password.txt`)—— **只要存在就用它**。
+1. `/data/password.txt`(宿主 `/root/sdf/data/password.txt`)—— **只要存在就用它**。
    在页面「设置 → 登录密码」改密码会写这个文件,立即生效,不用重启。
 2. `SDF_PASSWORD` 环境变量 —— 仅当上面那个文件不存在时生效。
 3. 都没有则用 `admin123`。
 
 登录成功后不再回读 `SDF_PASSWORD`。所以改完密码后容器里那个环境变量就发布时间了 ——
-忘了密码时,删掉 `/root/sdf-data/password.txt` 并重启容器,就回到 `SDF_PASSWORD`。
+忘了密码时,删掉 `/root/sdf/data/password.txt` 并重启容器,就回到 `SDF_PASSWORD`。
 
 ## Docker 部署
 
 镜像由 GitHub Actions 推到 `ghcr.io/aries6955/sdf:latest`,推 `main` 即重建。
-服务器上不需要克隆源码,直接跑:
+服务器上不需要克隆源码。所有东西都收在一个目录里,不往宿主其他位置写:
+
+```
+/root/sdf/
+  docker-compose.yml     部署定义
+  .env                   密码与 R2 密钥(权限 600)
+  data/                  数据库、password.txt、backups/ 全在这
+  offsite_backup.sh      异地备份入口(cron 调它)
+  sdf-backup.log         备份日志
+```
+
+```bash
+mkdir -p /root/sdf && cd /root/sdf
+cp /path/to/docker-compose.yml .
+cp /path/to/.env.example .env && chmod 600 .env && vi .env   # 填密码与 R2 四项
+cp /path/to/scripts/offsite_backup.sh . && chmod +x offsite_backup.sh
+docker compose up -d
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8536/login   # 200
+```
+
+访问 `http://<服务器IP>:8536`。数据落在 `/root/sdf/data`(容器内的 `/data`),
+删容器重建不丢;整个目录挪走或打包就是完整搬迁。
+
+compose 里的 `./data` 是相对 compose 文件所在目录的,所以在别处执行也不用加 `-f`。
+想改用别的盘就把它写成绝对路径。
+容器以 root 运行,所以宿主目录不需要提前 `chown`。
+
+不用 compose 也行,但要自己展开 `.env` 的值,且把卷指向同一个 `data` 目录:
 
 ```bash
 docker run -d --name sdf --restart unless-stopped \
   -p 8536:8536 \
   -e SDF_PASSWORD='你的密码' \
-  -v /root/sdf-data:/data \
+  -v /root/sdf/data:/data \
   ghcr.io/aries6955/sdf:latest
 ```
-
-访问 `http://<服务器IP>:8536`。`SDF_PASSWORD` 不设则用 `admin123`,登录后到「设置」改。
-数据落在宿主 `/root/sdf-data`(容器内的 `/data`),删容器重建不丢。
-换目录就改 `-v` 左边那一段,容器内始终是 `/data`。
-想改密码/换备份密钥而不重建容器,用下面的 `.env` 方式。
-
-仓库里的 `docker-compose.yml` 是等价写法,想用 compose 才需要拷这一个文件:
-
-```bash
-docker compose up -d                      # 默认挂 /root/sdf-data
-SDF_DATA=/opt/sdf docker compose up -d    # 换到别的目录
-```
-
-容器以 root 运行,所以宿主目录不需要提前 `chown`。
 
 ## 异地备份(Cloudflare R2)
 
@@ -63,30 +76,31 @@ SDF_DATA=/opt/sdf docker compose up -d    # 换到别的目录
 1. Cloudflare 控制台建一个 R2 桶,比如 `sdf-backup`(保持私有)。
    R2 → Manage R2 API Tokens → Create API Token,权限选 **Object Read & Write**,
    范围限定到这个桶;记下 Access Key ID、Secret Access Key 和 Account ID。
-2. 把 `.env.example` 拷成 `.env`,填上 R2 四项与登录密码,权限设 600:
+2. 在 `/root/sdf/` 里把 `.env.example` 拷成 `.env`,填上 R2 四项与登录密码,权限设 600:
 
 ```bash
+cd /root/sdf
 cp .env.example .env && chmod 600 .env && vi .env
 ```
 
-3. 删掉旧容器,用 compose 起(会自动读 `.env`,以后改密钥只需 `docker compose up -d`):
+3. 改完 `.env` 让它生效(容器会重建,数据在 `data/` 里不受影响):
 
 ```bash
-cd /root && docker compose up -d
+docker compose up -d
 ```
 
-如果你不用 compose,就自己把 `.env` 的值展开到 `docker run -e`,效果等价。
+以后改密码或换密钥,都是改 `/root/sdf/.env` 再 `docker compose up -d`,不必重写一长串 `-e`。
 
-4. 拷 `scripts/offsite_backup.sh` 到 `/root/`,手工跑一次:
+4. 手工跑一次备份(脚本已在 `/root/sdf/`):
 
 ```bash
-bash /root/offsite_backup.sh        # 应看到「校验通过 {…}」与「已上传 offsite-….sqlite3」
+bash /root/sdf/offsite_backup.sh    # 应看到「校验通过 {…}」与「已上传 offsite-….sqlite3」
 ```
 
 5. 上传成功后在 `crontab -e` 加一行(每天 4:00,按宿主时区):
 
 ```
-0 4 * * * bash /root/offsite_backup.sh >> /var/log/sdf-backup.log 2>&1
+0 4 * * * bash /root/sdf/offsite_backup.sh >> /root/sdf/sdf-backup.log 2>&1
 ```
 
 cron 按**宿主**时区执行,与容器里的 `TZ` 无关。部署前先用 `timedatectl` 确认宿主时区,

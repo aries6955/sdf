@@ -11,5 +11,5 @@ services:
     environment:
       TZ: Asia/Shanghai
     volumes:
-      # 宿主 ${SDF_DATA:-/root/sdf-data} 挂到容器的 /data;换目录改环境变量或这里
-      - ${SDF_DATA:-/root/sdf-data}:/data
+      # 数据与配置同在项目目录,不往宿主其他位置写;要换盘就改绝对路径
+      - ./data:/data

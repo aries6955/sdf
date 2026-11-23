@@ -15,6 +15,7 @@
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -26,10 +27,8 @@ TMP = ROOT / ".tmp"
 
 
 def password() -> str:
-    path = ROOT / "password.txt"
-    if path.exists():
-        return path.read_text(encoding="utf-8").strip()
-    return "admin123"
+    """与线上一致:只从环境变量读,不读文件。"""
+    return os.environ.get("SDF_PASSWORD", "admin123")
 
 
 def dump(path: str, click: str = "", screenshots: bool = False,

@@ -2,7 +2,6 @@
 __pycache__/
 *.pyc
 data.sqlite3
-password.txt
 .pytest_cache/
 data.sqlite3.bak*
 

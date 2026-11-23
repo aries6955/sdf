@@ -5,25 +5,27 @@
 ## 运行
 
 ```bash
-cp password.example.txt password.txt          # 编辑其中的登录密码
+export SDF_PASSWORD='你的密码'                # 不设则用 admin123
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-浏览器访问 http://127.0.0.1:8000 。改密码请编辑 `password.txt` 并重启服务。
+浏览器访问 http://127.0.0.1:8000 。改密码就是改这个环境变量并重启服务。
 
 数据保存在项目目录的 `data.sqlite3`,由单进程独占写入。
 
 ## 密码存在哪
 
-三层,优先级从高到低:
+只有一处:`SDF_PASSWORD` 环境变量(Docker 部署时写在 `.env` 里)。
+密码不入数据库、不晾文件,所以改密码 = 改 `.env` 那一行 + 重建容器:
 
-1. `/data/password.txt`(宿主 `/root/sdf/data/password.txt`)—— **只要存在就用它**。
-   在页面「设置 → 登录密码」改密码会写这个文件,立即生效,不用重启。
-2. `SDF_PASSWORD` 环境变量 —— 仅当上面那个文件不存在时生效。
-3. 都没有则用 `admin123`。
+```bash
+vi /root/sdf/.env          # 改 SDF_PASSWORD
+cd /root/sdf && docker compose up -d
+```
 
-登录成功后不再回读 `SDF_PASSWORD`。所以改完密码后容器里那个环境变量就发布时间了 ——
-忘了密码时,删掉 `/root/sdf/data/password.txt` 并重启容器,就回到 `SDF_PASSWORD`。
+`.env.example` 的注释里也写了这两步。忘密恢复靠 `SDF_SUPER_PASSWORD`
+(`.env` 里取消注释并填一个长随机串):用它登录会直接进「设置」页。
+两者都没设时密码是 `admin123`,公开部署前必须改。
 
 ## Docker 部署
 
@@ -34,7 +36,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 /root/sdf/
   docker-compose.yml     部署定义
   .env                   密码与 R2 密钥(权限 600)
-  data/                  数据库、password.txt、backups/ 全在这
+  data/                  数据库与 backups/ 全在这
   offsite_backup.sh      异地备份入口(cron 调它)
   sdf-backup.log         备份日志
 ```

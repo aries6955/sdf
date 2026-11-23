@@ -33,19 +33,9 @@
 
 <section class="card">
   <h2>修改登录密码</h2>
-  <p class="hint">修改后立即生效,无需重启服务。旧密码将失效。</p>
-  <form method="post" action="/init/password">
-    <div class="formgrid">
-      <div class="field"><label for="pw-old">当前密码</label>
-        <input id="pw-old" type="password" name="old_password" required autocomplete="current-password"></div>
-      <div class="field"><label for="pw-new">新密码</label>
-        <input id="pw-new" type="password" name="new_password" required minlength="4" autocomplete="new-password"></div>
-      <div class="field"><label for="pw-confirm">确认新密码</label>
-        <input id="pw-confirm" type="password" name="confirm_password" required minlength="4" autocomplete="new-password"></div>
-    </div>
-    <div class="actions"><button type="submit">保存新密码</button></div>
-    <p class="hint" style="margin-top:10px">密码保存在项目目录的 password.txt。请妥善保管。如果忘记密码,可用超级密码登录后在此重新设置。</p>
-  </form>
+  <p class="hint">密码只保存在 `/root/sdf/.env` 的 `SDF_PASSWORD` 一行,不入数据库也不晾文件。
+  修改步骤:先用 `vi /root/sdf/.env` 改那一行,再执行 `docker compose up -d` 重建容器,
+  新密码立即生效。本页不提供在线修改入口,以免密码分存两处。</p>
 </section>
 
 <section class="card">

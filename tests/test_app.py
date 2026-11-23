@@ -153,13 +153,14 @@ def test_bad_password_rejected(client):
 
 
 def test_change_password(client):
+    """页面不再写密码文件:提交后引导去改 .env,登录仍用旧密码。"""
+    from urllib.parse import unquote
+
     from tests.conftest import TEST_PASSWORD
-    client.post("/init/password", data={"old_password": "wrong",
-                                        "new_password": "abcd", "confirm_password": "abcd"})
-    client.post("/init/password", data={"old_password": TEST_PASSWORD,
-                                        "new_password": "abcd", "confirm_password": "abcd"})
-    r = client.post("/login", data={"password": "abcd"}, follow_redirects=False)
-    assert r.status_code == 303
+    r = client.post("/init/password", follow_redirects=False)
+    assert "SDF_PASSWORD" in unquote(r.headers["location"])
+    ok = client.post("/login", data={"password": TEST_PASSWORD}, follow_redirects=False)
+    assert ok.headers["location"] == "/"
 
 
 def test_property_name(client):

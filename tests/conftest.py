@@ -4,7 +4,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.db as db
-import app.main as app_main
 from app.main import app
 
 TEST_PASSWORD = "test-pass-123"
@@ -12,10 +11,8 @@ TEST_PASSWORD = "test-pass-123"
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    # 测试用独立的密码文件,不碰真实 password.txt
-    pw = tmp_path / "password.txt"
-    pw.write_text(TEST_PASSWORD + "\n", encoding="utf-8")
-    monkeypatch.setattr(app_main, "password_path", lambda: pw)
+    # 密码只认环境变量,不落文件
+    monkeypatch.setenv("SDF_PASSWORD", TEST_PASSWORD)
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.sqlite3")
     with TestClient(app) as c:
         r = c.post("/login", data={"password": TEST_PASSWORD}, follow_redirects=False)

@@ -9,7 +9,7 @@ from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import backup, db, readings, tenancy
+from . import backup, readings, tenancy
 from .billing import (
     all_periods,
     open_lines,
@@ -85,14 +85,8 @@ async def auth_guard(request: Request, call_next):
 
 # ---------- 基础设施 ----------
 
-def password_path() -> Path:
-    return db.DATA_DIR / "password.txt"
-
-
 def password_from_config() -> str:
-    path = password_path()
-    if path.exists():
-        return path.read_text(encoding="utf-8").strip()
+    """密码只来自 SDF_PASSWORD(.env);不落文件。"""
     return os.environ.get("SDF_PASSWORD", "admin123")
 
 
@@ -105,10 +99,6 @@ def verify_password(given: str) -> tuple[bool, bool]:
     if SUPER_PASSWORD and given == SUPER_PASSWORD:
         return True, True
     return given == password_from_config(), False
-
-
-def save_password(new: str) -> None:
-    password_path().write_text(new + "\n", encoding="utf-8")
 
 
 def _looks_broken(text: str) -> bool:
@@ -256,19 +246,9 @@ def init_property(property_name: str = Form("")):
 
 
 @app.post("/init/password")
-def init_password(old_password: str = Form(...), new_password: str = Form(...),
-                  confirm_password: str = Form(...)):
-    ok, _ = verify_password(old_password)
-    if not ok:
-        return go("/init", msg="当前密码不正确")
-    if new_password != confirm_password:
-        return go("/init", msg="两次输入的新密码不一致")
-    if len(new_password) < 4:
-        return go("/init", msg="新密码至少 4 位")
-    if new_password == SUPER_PASSWORD:
-        return go("/init", msg="新密码不能与超级密码相同")
-    save_password(new_password)
-    return go("/init", ok="密码已修改,下次登录请使用新密码")
+def init_password():
+    """密码只认 .env:页面不再写文件,只告诉用户去哪里改。"""
+    return go("/init", msg="密码在 .env 的 SDF_PASSWORD 里改,然后 docker compose up -d")
 
 
 # ---------- 租户 ----------

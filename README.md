@@ -16,15 +16,27 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ## Docker 部署
 
 镜像由 GitHub Actions 推到 `ghcr.io/aries6955/sdf:latest`,推 `main` 即重建。
+服务器上不需要克隆源码,直接跑:
 
 ```bash
-docker compose up -d              # 端口 8536,数据落在命名卷 sdf-data
+docker run -d --name sdf --restart unless-stopped \
+  -p 8536:8536 \
+  -e SDF_PASSWORD='你的密码' \
+  -v sdf-data:/data \
+  ghcr.io/aries6955/sdf:latest
 ```
 
-首次登录密码由 `SDF_PASSWORD` 决定(默认 `admin123`),登录后请到「设置」改;
-`SDF_DATA_DIR=/data` 指向命名卷 `sdf-data`(里面是 `data.sqlite3`、`password.txt` 与 `backups/`),
-`docker compose down` 后重建容器不丢数据。要直接看文件就 `docker cp sdf:/data ./data`,
-或者在 compose 里把它改成 `- ./data:/data` 并先 `chown 10001 ./data`。
+访问 `http://<服务器IP>:8536`。`SDF_PASSWORD` 不设则用 `admin123`,登录后到「设置」改。
+数据都在命名卷 `sdf-data` 里(`data.sqlite3`、`password.txt`、`backups/`),删容器重建不丢。
+
+仓库里的 `docker-compose.yml` 是等价的写法,只有想用 compose 时才需要把它拷到服务器:
+
+```bash
+docker compose up -d
+```
+
+想直接看数据文件:`docker cp sdf:/data ./data`;或者把卷换成目录挂载
+(`-v /opt/sdf-data:/data`,先 `chown 10001 /opt/sdf-data`)。
 
 ## 检查
 

@@ -13,6 +13,18 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 数据保存在项目目录的 `data.sqlite3`,由单进程独占写入。
 
+## 密码存在哪
+
+三层,优先级从高到低:
+
+1. `/data/password.txt`(宿主 `/root/sdf-data/password.txt`)—— **只要存在就用它**。
+   在页面「设置 → 登录密码」改密码会写这个文件,立即生效,不用重启。
+2. `SDF_PASSWORD` 环境变量 —— 仅当上面那个文件不存在时生效。
+3. 都没有则用 `admin123`。
+
+登录成功后不再回读 `SDF_PASSWORD`。所以改完密码后容器里那个环境变量就发布时间了 ——
+忘了密码时,删掉 `/root/sdf-data/password.txt` 并重启容器,就回到 `SDF_PASSWORD`。
+
 ## Docker 部署
 
 镜像由 GitHub Actions 推到 `ghcr.io/aries6955/sdf:latest`,推 `main` 即重建。
@@ -29,6 +41,7 @@ docker run -d --name sdf --restart unless-stopped \
 访问 `http://<服务器IP>:8536`。`SDF_PASSWORD` 不设则用 `admin123`,登录后到「设置」改。
 数据落在宿主 `/root/sdf-data`(容器内的 `/data`),删容器重建不丢。
 换目录就改 `-v` 左边那一段,容器内始终是 `/data`。
+想改密码/换备份密钥而不重建容器,用下面的 `.env` 方式。
 
 仓库里的 `docker-compose.yml` 是等价写法,想用 compose 才需要拷这一个文件:
 
@@ -43,35 +56,34 @@ SDF_DATA=/opt/sdf docker compose up -d    # 换到别的目录
 
 应用内的「备份」写在数据卷的 `backups/` 里,和数据库同盘 —— 整机或卷丢了会一起没。
 异地靠宿主 cron 每天推一份一致快照到 R2。rclone 已随镜像发布,服务器上不用另装;
-宿主只需一个三行的转发脚本,凭据走 `docker run -e`,不进仓库。
+宿主只需一个三行的转发脚本,凭据写在宿主的 `.env` 里,改密码或换密钥都不必重建容器。
 
 准备(只做一次):
 
 1. Cloudflare 控制台建一个 R2 桶,比如 `sdf-backup`(保持私有)。
    R2 → Manage R2 API Tokens → Create API Token,权限选 **Object Read & Write**,
    范围限定到这个桶;记下 Access Key ID、Secret Access Key 和 Account ID。
-2. 删掉旧容器,带 `SDF_R2_*` 环境变量重建(与现有的 `-v`、`-e SDF_PASSWORD` 并列):
+2. 把 `.env.example` 拷成 `.env`,填上 R2 四项与登录密码,权限设 600:
 
 ```bash
-docker rm -f sdf
-docker run -d --name sdf --restart unless-stopped \
-  -p 8536:8536 \
-  -e SDF_PASSWORD='你的密码' \
-  -e SDF_R2_ACCOUNT_ID=你的accountid \
-  -e SDF_R2_ACCESS_KEY_ID=xxx \
-  -e SDF_R2_SECRET_ACCESS_KEY=xxx \
-  -e SDF_R2_BUCKET=sdf-backup \
-  -v /root/sdf-data:/data \
-  ghcr.io/aries6955/sdf:latest
+cp .env.example .env && chmod 600 .env && vi .env
 ```
 
-3. 拷 `scripts/offsite_backup.sh` 到 `/root/`,手工跑一次:
+3. 删掉旧容器,用 compose 起(会自动读 `.env`,以后改密钥只需 `docker compose up -d`):
+
+```bash
+cd /root && docker compose up -d
+```
+
+如果你不用 compose,就自己把 `.env` 的值展开到 `docker run -e`,效果等价。
+
+4. 拷 `scripts/offsite_backup.sh` 到 `/root/`,手工跑一次:
 
 ```bash
 bash /root/offsite_backup.sh        # 应看到「校验通过 {…}」与「已上传 offsite-….sqlite3」
 ```
 
-4. 上传成功后在 `crontab -e` 加一行(每天 3:17):
+5. 上传成功后在 `crontab -e` 加一行(每天 4:00,按宿主时区):
 
 ```
 0 4 * * * bash /root/offsite_backup.sh >> /var/log/sdf-backup.log 2>&1

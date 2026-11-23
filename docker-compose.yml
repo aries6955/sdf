@@ -5,11 +5,10 @@ services:
     restart: unless-stopped
     ports:
       - "8536:8536"
+    # 所有配置都在 .env 里改,不在这里写死
+    env_file:
+      - .env
     environment:
-      # 首次登录密码;改成自己的。不设则用 admin123,登录后请在「设置」里改
-      SDF_PASSWORD: ${SDF_PASSWORD:-admin123}
-      # 忘密恢复入口:不设就没有这条后门,设了请用长随机串
-      # SDF_SUPER_PASSWORD:
       TZ: Asia/Shanghai
     volumes:
       # 宿主 ${SDF_DATA:-/root/sdf-data} 挂到容器的 /data;换目录改环境变量或这里

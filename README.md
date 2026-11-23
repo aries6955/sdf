@@ -74,8 +74,11 @@ bash /root/offsite_backup.sh        # 应看到「校验通过 {…}」与「已
 4. 上传成功后在 `crontab -e` 加一行(每天 3:17):
 
 ```
-17 3 * * * bash /root/offsite_backup.sh >> /var/log/sdf-backup.log 2>&1
+0 4 * * * bash /root/offsite_backup.sh >> /var/log/sdf-backup.log 2>&1
 ```
+
+cron 按**宿主**时区执行,与容器里的 `TZ` 无关。部署前先用 `timedatectl` 确认宿主时区,
+上面这行就是宿主本地时间每天 4:00。
 
 想看桶里有什么,用一次性容器自查,不需要在宿主装 rclone:
 

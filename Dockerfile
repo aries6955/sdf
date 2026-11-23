@@ -13,6 +13,8 @@ FROM python:3.12-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-wqy-zenhei \
  && rm -rf /var/lib/apt/lists/*
+# rclone 用于异地备份(app.offsite):官方镜像是静态编译的,拷二进制即可,不引 alpine
+COPY --from=rclone/rclone:1.76.0 /usr/local/bin/rclone /usr/local/bin/rclone
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 COPY app /app/app

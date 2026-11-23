@@ -39,6 +39,64 @@ SDF_DATA=/opt/sdf docker compose up -d    # 换到别的目录
 
 容器以 root 运行,所以宿主目录不需要提前 `chown`。
 
+## 异地备份(Cloudflare R2)
+
+应用内的「备份」写在数据卷的 `backups/` 里,和数据库同盘 —— 整机或卷丢了会一起没。
+异地靠宿主 cron 每天推一份一致快照到 R2。rclone 已随镜像发布,服务器上不用另装;
+宿主只需一个三行的转发脚本,凭据走 `docker run -e`,不进仓库。
+
+准备(只做一次):
+
+1. Cloudflare 控制台建一个 R2 桶,比如 `sdf-backup`(保持私有)。
+   R2 → Manage R2 API Tokens → Create API Token,权限选 **Object Read & Write**,
+   范围限定到这个桶;记下 Access Key ID、Secret Access Key 和 Account ID。
+2. 删掉旧容器,带 `SDF_R2_*` 环境变量重建(与现有的 `-v`、`-e SDF_PASSWORD` 并列):
+
+```bash
+docker rm -f sdf
+docker run -d --name sdf --restart unless-stopped \
+  -p 8536:8536 \
+  -e SDF_PASSWORD='你的密码' \
+  -e SDF_R2_ACCOUNT_ID=你的accountid \
+  -e SDF_R2_ACCESS_KEY_ID=xxx \
+  -e SDF_R2_SECRET_ACCESS_KEY=xxx \
+  -e SDF_R2_BUCKET=sdf-backup \
+  -v /root/sdf-data:/data \
+  ghcr.io/aries6955/sdf:latest
+```
+
+3. 拷 `scripts/offsite_backup.sh` 到 `/root/`,手工跑一次:
+
+```bash
+bash /root/offsite_backup.sh        # 应看到「校验通过 {…}」与「已上传 offsite-….sqlite3」
+```
+
+4. 上传成功后在 `crontab -e` 加一行(每天 3:17):
+
+```
+17 3 * * * bash /root/offsite_backup.sh >> /var/log/sdf-backup.log 2>&1
+```
+
+想看桶里有什么,用一次性容器自查,不需要在宿主装 rclone:
+
+```bash
+docker run --rm -e RCLONE_CONFIG_R2_TYPE=s3 -e RCLONE_CONFIG_R2_PROVIDER=Cloudflare \
+  -e RCLONE_CONFIG_R2_REGION=auto -e RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true \
+  -e RCLONE_CONFIG_R2_ACCESS_KEY_ID=$KEY -e RCLONE_CONFIG_R2_SECRET_ACCESS_KEY=$SECRET \
+  -e RCLONE_CONFIG_R2_ENDPOINT=https://$ACCOUNT_ID.r2.cloudflarestorage.com \
+  rclone/rclone:1.76.0 lsf r2:sdf-backup/sdf
+```
+
+没有配置 `SDF_R2_*` 时,`python -m app.offsite` 只打一行提示就退出(退出码 0),
+不会让 cron 每天发报警。
+
+备份逻辑在 `app/offsite.py`:用 SQLite 在线备份 API 出快照(运行中 `cp` 可能拿到半页),
+`PRAGMA integrity_check` 跟各表行数校验,通过了才上传;上传成功后删 R2 里超过 `SDF_KEEP_DAYS`
+(默认 30 天)的旧份,并删掉本地临时快照,免得 `/init` 页面的备份列表被刷屏。
+
+**恢复演练必做**:备份没验证过等于没有。每季度从 R2 取一份最新的,本地覆盖跑一次
+`uv run uvicorn` 看账本对不对。
+
 ## 检查
 
 ```bash

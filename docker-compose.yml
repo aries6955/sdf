@@ -1,0 +1,18 @@
+services:
+  sdf:
+    image: ghcr.io/aries6955/sdf:latest
+    container_name: sdf
+    restart: unless-stopped
+    ports:
+      - "8536:8536"
+    environment:
+      # 首次登录密码;改成自己的。不设则用 admin123,登录后请在「设置」里改
+      SDF_PASSWORD: ${SDF_PASSWORD:-admin123}
+      # 忘密恢复入口:不设就没有这条后门,设了请用长随机串
+      # SDF_SUPER_PASSWORD: 
+      TZ: CST-8
+    volumes:
+      - sdf-data:/data
+
+volumes:
+  sdf-data:

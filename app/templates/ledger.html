@@ -1,5 +1,12 @@
 {% extends "base.html" %}
 {% block body %}
+<div class="stats">
+  <div class="stat tone-violet"><div class="k">应收合计</div><div class="v">{{ money(sum_due) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-positive"><div class="k">已收合计</div><div class="v">{{ money(sum_paid) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-negative"><div class="k">未收合计</div><div class="v">{{ money(sum_outstanding) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-teal"><div class="k">账期数</div><div class="v">{{ rows|length }}<span class="u"> 期</span></div></div>
+</div>
+
 <section class="card">
   <h2>登记收款</h2>
   <p class="hint">收款记在租户名下,不指定某一期。系统按最早欠账优先自动冲抵,多收的转为预收余额。</p>
@@ -19,54 +26,92 @@
           <option value="refund">退款</option>
         </select></div>
       <div class="field"><label for="rc-amount">金额</label>
-        <input id="rc-amount" type="number" step="0.01" name="amount" placeholder="实际收到的钱" required></div>
-      <div class="field"><label for="rc-note">备注</label><input id="rc-note" name="note" placeholder="选填"></div>
+        <input id="rc-amount" type="number" step="0.01" name="amount" placeholder="实际收到的钱" required>
+        <span class="assist" id="rc-hint">选择租户后自动带出欠款合计,可改</span></div>
+      <div class="field"><label for="rc-note">备注</label><input class="note-input" id="rc-note" name="note" placeholder="选填"></div>
+    </div>
+    <div class="card-section" id="rc-bills" hidden>
+      <p class="card-section-title" id="rc-bills-title">该租户未结清账期</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>类型</th><th>账期</th><th class="num">用量</th><th class="num">应收</th><th class="num">已收</th><th class="num">未收</th></tr></thead>
+          <tbody data-rc-lines></tbody>
+        </table>
+      </div>
     </div>
     <div class="actions"><button type="submit">登记</button></div>
   </form>
+  <script>
+  (function(){
+    var sel=document.getElementById('rc-hh'), amount=document.getElementById('rc-amount');
+    var hint=document.getElementById('rc-hint');
+    var box=document.getElementById('rc-bills'), title=document.getElementById('rc-bills-title');
+    var body=box.querySelector('[data-rc-lines]');
+    var types={{ {'water': type_name('water'), 'electricity': type_name('electricity')}|tojson }};
+    var owed={{ owed|tojson }}, totals={{ owed_total|tojson }};
+    if(!sel) return;
+    var touched=false;
+    amount.addEventListener('input', function(){ touched=true; });
+    function render(){
+      var id=sel.value, lines=owed[id]||[];
+      if(!lines.length){
+        box.hidden=true;
+        hint.textContent='选择租户后自动带出欠款合计,可改';
+        return;
+      }
+      box.hidden=false;
+      var total=totals[id]||0;
+      title.textContent='该租户未结清账期(共 '+lines.length+' 期,合计欠 '+total.toFixed(2)+' 元)';
+      body.innerHTML='';
+      lines.forEach(function(l){
+        var tr=document.createElement('tr');
+        tr.innerHTML='<td>'+(types[l.meter_type]||'')+'</td>'+
+          '<td>'+l.start+' ~ '+l.end+'</td>'+
+          '<td class="num">'+Number(l.usage).toLocaleString('zh-CN')+'</td>'+
+          '<td class="num">'+Number(l.amount).toFixed(2)+'</td>'+
+          '<td class="num">'+Number(l.paid).toFixed(2)+'</td>'+
+          '<td class="num">'+Number(l.outstanding).toFixed(2)+'</td>';
+        body.appendChild(tr);
+      });
+      hint.textContent='该租户欠款合计 '+total.toFixed(2)+' 元,已填入金额框,可改';
+      if(!touched) amount.value=total.toFixed(2);
+    }
+    sel.addEventListener('change', function(){ touched=false; render(); });
+    render();
+  })();
+  </script>
 </section>
-
-<section class="card">
-  <h2>查询条件</h2>
-  <p class="hint">逐期的应收、已收与未收。收款记在租户名下,按最早欠账优先自动冲抵,所以"已收"是冲抵后的结果,不是收款日期落在这一期的钱。</p>
-  <form method="get" action="/ledger">
-    <div class="formgrid">
-      <div class="field"><label for="l-hh">租户</label>
-        <select id="l-hh" name="household_id"><option value="">全部租户</option>
-          {% for x in households %}<option value="{{ x.id }}"{% if household_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
-        </select></div>
-      <div class="field"><label for="l-type">类型</label>
-        <select id="l-type" name="type">
-          <option value=""{% if not type %} selected{% endif %}>水 + 电</option>
-          <option value="water"{% if type == 'water' %} selected{% endif %}>只看水</option>
-          <option value="electricity"{% if type == 'electricity' %} selected{% endif %}>只看电</option>
-        </select></div>
-      <div class="field"><label for="l-status">收付状态</label>
-        <select id="l-status" name="status">
-          <option value=""{% if not status %} selected{% endif %}>全部</option>
-          <option value="unpaid"{% if status == 'unpaid' %} selected{% endif %}>未收款</option>
-          <option value="partial"{% if status == 'partial' %} selected{% endif %}>部分收款</option>
-          <option value="settled"{% if status == 'settled' %} selected{% endif %}>已结清</option>
-        </select></div>
-      <div class="field"><label for="l-from">账期起</label><input id="l-from" type="date" name="date_from" value="{{ date_from }}"></div>
-      <div class="field"><label for="l-to">账期止</label><input id="l-to" type="date" name="date_to" value="{{ date_to }}"></div>
-    </div>
-    <div class="actions">
-      <button type="submit">查询</button>
-      <a class="btn ghost" href="/ledger">清除条件</a>
-    </div>
-  </form>
-</section>
-
-<div class="stats">
-  <div class="stat"><div class="k">应收合计</div><div class="v">{{ money(sum_due) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">已收合计</div><div class="v">{{ money(sum_paid) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">未收合计</div><div class="v">{{ money(sum_outstanding) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">账期数</div><div class="v">{{ rows|length }}<span class="u"> 期</span></div></div>
-</div>
 
 <section class="card">
   <h2>台账明细 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
+<div class="filterbar">
+  <form method="get" action="/ledger">
+    <div class="field"><label for="l-hh">租户</label>
+      <select id="l-hh" name="household_id"><option value="">全部租户</option>
+        {% for x in households %}<option value="{{ x.id }}"{% if household_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
+      </select></div>
+    <div class="field"><label for="l-type">类型</label>
+      <select id="l-type" name="type">
+        <option value=""{% if not type %} selected{% endif %}>水 + 电</option>
+        <option value="water"{% if type == 'water' %} selected{% endif %}>只看水</option>
+        <option value="electricity"{% if type == 'electricity' %} selected{% endif %}>只看电</option>
+      </select></div>
+    <div class="field"><label for="l-status">收付状态</label>
+      <select id="l-status" name="status">
+        <option value=""{% if not status %} selected{% endif %}>全部</option>
+        <option value="unpaid"{% if status == 'unpaid' %} selected{% endif %}>未收款</option>
+        <option value="partial"{% if status == 'partial' %} selected{% endif %}>部分收款</option>
+        <option value="settled"{% if status == 'settled' %} selected{% endif %}>已结清</option>
+      </select></div>
+    <div class="field"><label for="l-from">账期起</label><input id="l-from" type="date" name="date_from" value="{{ date_from }}"></div>
+    <div class="field"><label for="l-to">账期止</label><input id="l-to" type="date" name="date_to" value="{{ date_to }}"></div>
+    <div class="actions">
+      <button type="submit">查询</button>
+      {% if household_id or type or status or date_from or date_to %}
+      <a class="btn ghost" href="/ledger">重置</a>{% endif %}
+    </div>
+  </form>
+</div>
   <p class="hint">按账期止倒序,最近的在上。</p>
   <div class="tablewrap">
     <table>
@@ -75,8 +120,8 @@
         {% if not page_rows %}<tr><td colspan="11" class="empty">没有符合条件的账期。</td></tr>{% endif %}
         {% for x in page_rows %}
         <tr id="p{{ x.line_id }}-{{ x.period_end }}">
-          <td><a href="/households/{{ x.household_id }}/ledger">{{ x.household_name }}</a></td>
-          <td><span class="tag muted">{{ type_name(x.meter_type) }}</span></td>
+          <td><a href="/ledger?household_id={{ x.household_id }}">{{ x.household_name }}</a></td>
+          <td>{{ type_tag(x.meter_type)|safe }}</td>
           <td>{{ x.meter_name or x.label or '—' }}</td>
           <td>{{ x.period_start }} ~ {{ x.period_end }}</td>
           <td class="num">{{ '{:,}'.format(x.usage) }}</td>
@@ -140,7 +185,7 @@
         {% for e in entries %}
         <tr>
           <td>{{ e.entry_date }}</td>
-          <td><a href="/households/{{ e.household_id }}/ledger">{{ e.household_name }}</a></td>
+          <td><a href="/ledger?household_id={{ e.household_id }}">{{ e.household_name }}</a></td>
           <td>{% if e.kind == 'receipt' %}<span class="tag ok">收款</span>{% else %}<span class="tag warn">退款</span>{% endif %}</td>
           <td class="num">{{ money(e.amount) }}</td>
           <td class="wrap">{{ e.note or '—' }}</td>

@@ -1,21 +1,62 @@
 {% extends "base.html" %}
 {% block body %}
 <div class="stats">
-  <div class="stat"><div class="k">租户</div><div class="v">{{ household_count }}<span class="u"> 户</span></div></div>
-  <div class="stat"><div class="k">在用分表</div><div class="v">{{ meter_count }}<span class="u"> 块</span></div></div>
-  <div class="stat"><div class="k">在用计量线</div><div class="v">{{ open_count }}<span class="u"> 条</span></div></div>
-  <div class="stat"><div class="k">应收合计</div><div class="v">{{ money(total_due) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">已收合计</div><div class="v">{{ money(total_paid) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">租户欠款</div><div class="v">{{ money(outstanding_total) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-brand"><div class="k">租户</div><div class="v">{{ household_count }}<span class="u"> 户</span></div></div>
+  <div class="stat tone-sky"><div class="k">在用分表</div><div class="v">{{ meter_count }}<span class="u"> 块</span></div></div>
+  <div class="stat tone-teal"><div class="k">在用计量线</div><div class="v">{{ open_count }}<span class="u"> 条</span></div></div>
+  <div class="stat tone-violet"><div class="k">应收合计</div><div class="v">{{ money(total_due) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-positive"><div class="k">已收合计</div><div class="v">{{ money(total_paid) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-negative"><div class="k">租户欠款</div><div class="v">{{ money(outstanding_total) }}<span class="u"> 元</span></div></div>
 </div>
+
+{% if setup_done %}
+<section class="card">
+  <h2>下一步</h2>
+  <p class="hint">按顺序做就行。红色数字表示还没收回来。</p>
+  <div class="stepcards">
+    <a class="stepcard" href="/readings">
+      <span class="stepico">{{ icon('pen')|safe }}</span>
+      <span class="stepbody">
+        <span class="stepk">新增抄表</span>
+        <span class="stepv">{% if last %}{{ last }}{% else %}还没抄过{% endif %}</span>
+        <span class="steps">上次抄表日期</span>
+      </span>
+    </a>
+    <a class="stepcard" href="/ledger">
+      <span class="stepico">{{ icon('wallet')|safe }}</span>
+      <span class="stepbody">
+        <span class="stepk">待收账款</span>
+        <span class="stepv{{ ' warn' if outstanding_total and outstanding_total > 0 else '' }}">{{ money(outstanding_total) }}<i> 元</i></span>
+        <span class="steps">应收 {{ money(total_due) }} · 已收 {{ money(total_paid) }}</span>
+      </span>
+    </a>
+    <a class="stepcard" href="/ledger">
+      <span class="stepico">{{ icon('coin')|safe }}</span>
+      <span class="stepbody">
+        <span class="stepk">预收余额</span>
+        <span class="stepv">{{ money(balance) }}<i> 元</i></span>
+        <span class="steps">可抵扣后续账期</span>
+      </span>
+    </a>
+    <a class="stepcard" href="/statistics">
+      <span class="stepico">{{ icon('chart')|safe }}</span>
+      <span class="stepbody">
+        <span class="stepk">抄表记录</span>
+        <span class="stepv">{{ reading_count }}<i> 条</i></span>
+        <span class="steps">查看用量与毛差</span>
+      </span>
+    </a>
+  </div>
+</section>
+{% endif %}
 
 <section class="card">
   <h2>常用操作</h2>
   <div class="quickrow">
-    <a href="/readings"><span class="mark" aria-hidden="true">✎</span><span>新增抄表<small>记录各计量线本次读数</small></span></a>
-    <a href="/payments"><span class="mark" aria-hidden="true">¥</span><span>新增缴费<small>照部门账单录入</small></span></a>
-    <a href="/ledger"><span class="mark" aria-hidden="true">▤</span><span>收款台账<small>应收、已收与未收</small></span></a>
-    <a href="/statistics"><span class="mark" aria-hidden="true">▥</span><span>统计与查询<small>用量、收费与毛差</small></span></a>
+    <a href="/readings"><span class="mark">{{ icon('pen')|safe }}</span><span>新增抄表<small>记录各计量线本次读数</small></span></a>
+    <a href="/payments"><span class="mark">{{ icon('coin')|safe }}</span><span>新增缴费<small>照部门账单录入</small></span></a>
+    <a href="/ledger"><span class="mark">{{ icon('wallet')|safe }}</span><span>收款台账<small>应收、已收与未收</small></span></a>
+    <a href="/statistics"><span class="mark">{{ icon('chart')|safe }}</span><span>统计与查询<small>用量、收费与毛差</small></span></a>
   </div>
 </section>
 
@@ -27,21 +68,6 @@
   <a href="/meters">先添加表 →</a>
 </div>
 {% else %}
-<section class="card">
-  <h2>下一步</h2>
-  <ul class="tasklist">
-    <li>
-      <a href="/readings">新增抄表</a>
-      {% if last %} — 上次抄表 {{ last }}{% else %} — 还没有抄表记录{% endif %}
-    </li>
-    {% if balance %}
-    <li>预收余额合计 {{ money(balance) }} 元,可用于抵扣后续账期</li>
-    {% endif %}
-    <li><a href="/ledger">收款台账</a> — 应收 {{ money(total_due) }},已收 {{ money(total_paid) }}
-      {% if outstanding_total and outstanding_total > 0 %},<span class="tag warn">未收 {{ money(outstanding_total) }}</span>{% endif %}</li>
-    <li><a href="/statistics">查看统计与费用</a> — 共 {{ reading_count }} 条抄表记录</li>
-  </ul>
-</section>
 
 <section class="card">
   <h2>收款台账</h2>
@@ -53,7 +79,7 @@
         {% if not ledger_rows %}<tr><td colspan="6" class="empty">还没有租户。</td></tr>{% endif %}
         {% for x in ledger_rows %}
         <tr>
-          <td><a href="/households/{{ x.household_id }}/ledger">{{ x.household_name }}</a></td>
+          <td><a href="/ledger?household_id={{ x.household_id }}">{{ x.household_name }}</a></td>
           <td class="num">{{ money(x.total_due) }}</td>
           <td class="num">{{ money(x.total_paid) }}</td>
           <td class="num">{{ money(x.outstanding) }}</td>
@@ -88,7 +114,7 @@
         {% for x in recent %}
         <tr>
           <td>{{ x.household_name }}</td>
-          <td>{{ type_name(x.meter_type) }}</td>
+          <td>{{ type_tag(x.meter_type)|safe }}</td>
           <td>{{ x.start }} ~ {{ x.end }}</td>
           <td class="num">{{ '{:,}'.format(x.usage) }}</td>
           <td class="num">{{ x.unit_price }}</td>

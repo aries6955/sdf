@@ -102,7 +102,7 @@ def test_reading_can_be_backfilled_into_middle(client):
     _add(client, "分水A", "2025-03-01", 160)
     assert _one("select usage_amount from receivables")["usage_amount"] == 60
     resp = _add(client, "分水A", "2025-02-01", 130)
-    assert "抄表已保存" in _msg(resp)
+    assert "已保存" in _msg(resp)
     rows = _q("select period_start, period_end, usage_amount from receivables order by period_end")
     assert [(r["period_start"], r["period_end"], r["usage_amount"]) for r in rows] == [
         ("2025-01-01", "2025-02-01", 30), ("2025-02-01", "2025-03-01", 30)]
@@ -214,7 +214,7 @@ def test_checkout_closes_line_and_settles(client):
     assert line["move_out_date"] == "2025-03-01"
     assert line["move_out_value"] == 180
     # 最后一期 50 吨 × 10 = 500;应收 300 + 500 = 800,已收 100,欠 700
-    html = client.get(f"/households/{_hid('甲')}/ledger").text
+    html = client.get(f"/ledger?household_id={_hid('甲')}").text
     assert "800.00" in html and "700.00" in html
 
 
@@ -277,7 +277,7 @@ def test_returning_tenant_is_a_new_line(client):
     assert len(lines) == 2
     assert lines[0]["move_out_date"] == "2025-03-01"
     assert lines[1]["move_out_date"] is None
-    html = client.get(f"/households/{_hid('甲')}/ledger").text
+    html = client.get(f"/ledger?household_id={_hid('甲')}").text
     assert "500.00" in html, "历史欠款仍然挂在这个人身上"
 
 
@@ -378,7 +378,52 @@ def test_move_in_reading_not_editable(client):
 
 def test_no_delete_routes(client):
     assert client.post("/households/delete", data={"id": "1"}).status_code in (404, 405)
-    assert client.post("/meters/delete", data={"id": "1"}).status_code in (404, 405)
+
+
+def test_blank_meter_can_delete_but_history_cannot(client):
+    """录错新建的空白表可删;进过账本的表不能删(ADR-0019)。"""
+    _add_meter(client, "空白表")
+    blank = _mid("空白表")
+    assert client.post("/meters/delete", data={"id": str(blank)}).status_code == 200
+    assert _one("select id from meters where id=?", (blank,)) is None
+    _basic(client)
+    used = _mid("分水A")
+    resp = client.post("/meters/delete", data={"id": str(used)}, follow_redirects=False)
+    assert "不能删除" in _msg(resp)
+    assert _one("select id from meters where id=?", (used,)) is not None
+
+
+def test_edit_meter_fields(client):
+    """空白表可改类型/级别/制式/装表读数;已有读数的表只放行改名、换归属。"""
+    _add_meter(client, "临时表")
+    mid = _mid("临时表")
+    resp = client.post("/meters/edit", data={
+        "id": str(mid), "name": "临时电表", "meter_type": "electricity",
+        "level": "sub", "phase": "three", "base_1": "12345",
+        "base_2": "23456", "base_3": "34567", "note": "改过"},
+        follow_redirects=False)
+    assert "表已更新" in _msg(resp)
+    m = _one("select * from meters where id=?", (mid,))
+    assert (m["meter_type"], m["phase"], m["base_value"], m["note"]) == \
+        ("electricity", "three", 70368, "改过")
+    assert (m["base_r1"], m["base_r2"], m["base_r3"]) == (12345, 23456, 34567)
+
+    _basic(client)
+    mid = _mid("分水A")
+    resp = client.post("/meters/edit", data={
+        "id": str(mid), "name": "分水A改名", "meter_type": "electricity",
+        "level": "main", "phase": "three", "base_value": "999"},
+        follow_redirects=False)
+    assert "不能改类型" in _msg(resp)
+    # 已有读数的表:类型/级别锁死,但装表读数可分相改正
+    resp = client.post("/meters/edit", data={
+        "id": str(mid), "name": "分水A改名", "meter_type": "water",
+        "level": "sub", "phase": "single", "base_value": "150"},
+        follow_redirects=False)
+    assert "表已更新" in _msg(resp)
+    m = _one("select * from meters where id=?", (mid,))
+    assert (m["name"], m["meter_type"], m["level"], m["base_value"]) == \
+        ("分水A改名", "water", "sub", 150)
 
 
 def test_no_adjustment_routes(client):
@@ -407,13 +452,37 @@ def test_payment_does_not_touch_receivables(client):
     assert _one("select amount from receivables")["amount"] == 300.0
 
 
-def test_main_meter_has_no_base(client):
+def test_main_meter_base_is_optional(client):
+    """总表不参与计费推算,装表读数可留空;填了就照存,留着换表时核对。"""
     _add_meter(client, "总水", level="main")
     assert _one("select base_value from meters where name='总水'")["base_value"] is None
+    _add_meter(client, "总电", kind="electricity", level="main", base="12000")
+    assert _one("select base_value from meters where name='总电'")["base_value"] == 12000
 
 
 # ---------- 补录与三相 ----------
 
+def test_three_phase_usage_sums_each_phase_delta(client):
+    """三相用量 = 各相本次 − 各相上次,再相加;不是只拿合计相减。
+
+    上次 A=100 B=15 C=80,本次 A=120 B=50 C=100
+    → (120−100)+(50−15)+(100−80) = 75
+    """
+    _add_meter(client, "分电T", kind="electricity", phase="three", base="0/0/0")
+    _move_in(client, "甲", [("分电T", (100, 15, 80), 10)])
+    _add(client, "分电T", "2025-02-01", (120, 50, 100))
+    rec = _one("select * from receivables order by id desc limit 1")
+    assert rec["usage_amount"] == 75, "三相用量须按分相差额相加"
+    assert rec["amount"] == 750.0
+
+
+def test_three_phase_rejects_single_phase_regression(client):
+    """某一相读数回退就该拒,即使三相合计仍在增长。"""
+    _add_meter(client, "分电T", kind="electricity", phase="three", base="0/0/0")
+    _move_in(client, "甲", [("分电T", (100, 15, 80), 10)])
+    # 合计 230 > 195,但 B 相 10 < 15
+    resp = _add(client, "分电T", "2025-02-01", (120, 10, 100))
+    assert "某一相读数小于前一条" in _msg(resp)
 
 
 
@@ -433,7 +502,7 @@ def test_backfill_blocked_inside_paid_period(client):
 
     # 删掉收款后补录才放行
     client.post("/receipts/delete", data={"id": str(_one("select id from receipts")["id"])})
-    assert "抄表已保存" in _msg(_add(client, "分水A", "2025-02-01", 130))
+    assert "已保存" in _msg(_add(client, "分水A", "2025-02-01", 130))
     assert len(_q("select * from receivables")) == 2
 
 
@@ -465,3 +534,92 @@ def test_refund_is_a_receipt_entry(client):
     conn.close()
     assert led["refunded"] == 100.0
     assert led["balance"] == 100.0
+
+
+# ---------- 备份与恢复 ----------
+
+def test_clear_auto_backs_up_and_restore(client):
+    """清空前自动备份,恢复能把整库找回来。"""
+    from tests.conftest import _add, _add_meter, _move_in
+    _add_meter(client, "总水", level="main")
+    _add_meter(client, "分水A", base="100")
+    _move_in(client, "甲", [("分水A", 100, 10)])
+    _add(client, "分水A", "2025-02-01", 130)
+
+    html = client.get("/init").text
+    assert "清空所有数据" in html and "立即备份" in html
+
+    resp = client.post("/init/clear", follow_redirects=False)
+    assert "自动备份" in _msg(resp)
+    assert _one("select count(*) n from households")["n"] == 0
+
+    html = client.get("/init").text
+    assert "清空前自动备份.sqlite3" in html
+    client.post("/init/restore", data={"name": "清空前自动备份.sqlite3"})
+    assert _one("select count(*) n from households")["n"] == 1
+    assert _one("select count(*) n from readings")["n"] == 2
+
+
+# ---------- 回归:锁定按计量线取,日期入口必须校验 ----------
+
+def test_lock_is_scoped_to_the_line_not_the_household(client):
+    """同一租户水电两路同日各有一期:收了水费不能锁死电表那一期(ADR-0015/0021)。"""
+    from tests.conftest import _add, _add_meter, _hid, _move_in
+    _add_meter(client, "总水", level="main")
+    _add_meter(client, "分水A", base="0")
+    _add_meter(client, "分电A", kind="electricity", base="0")
+    _move_in(client, "甲", [("分水A", 0, 1), ("分电A", 0, 1)])
+    _add(client, "分水A", "2025-02-01", 100)      # 水路一期:应收 100
+    _add(client, "分电A", "2025-02-01", 1000)     # 电路一期:应收 1000
+    client.post("/receipts/add", data={"household_id": str(_hid("甲")),
+                                       "entry_date": "2025-02-05", "amount": "100"})
+
+    water = _one("select id from lines where meter_type='water'")["id"]
+    elec = _one("select id from lines where meter_type='electricity'")["id"]
+    # 水费那一期已收款 -> 挡住
+    assert "已收款" in _msg(_add_by_line(client, water, "分水A", "2025-01-15", 50))
+    # 电费那一期没收到钱 -> 必须放行
+    assert "已保存" in _msg(_add_by_line(client, elec, "分电A", "2025-01-15", 500))
+
+
+def _add_by_line(client, line_id, meter_name, date, value):
+    from tests.conftest import _mid
+    return client.post("/readings/add", data={
+        "line_id": str(line_id), "meter_id": str(_mid(meter_name)),
+        "reading_date": date, "value": str(value), "tenant_price": "1"},
+        follow_redirects=False)
+
+
+def test_bad_dates_never_reach_the_books(client):
+    """非法日期一旦落库,账期排序会静默错位;四个写入口都要挡住它。"""
+    from tests.conftest import _add_meter, _hid, _mid, _move_in
+    _add_meter(client, "总水", level="main")
+    _add_meter(client, "分水A", base="0")
+    _move_in(client, "甲", [("分水A", 0, 10)])
+    line = _one("select id from lines where move_out_date is null")["id"]
+
+    def post(url, data):
+        return client.post(url, data=data, follow_redirects=False)
+
+    assert "正确的抄表日期" in _msg(post("/readings/add", {
+        "line_id": str(line), "meter_id": str(_mid("分水A")),
+        "reading_date": "2025-13-45", "value": "99", "tenant_price": "10"}))
+    assert "正确的收款日期" in _msg(post("/receipts/add", {
+        "household_id": str(_hid("甲")), "entry_date": "不是日期", "amount": "10"}))
+    assert "正确的缴费日期" in _msg(post("/payments/add", {
+        "meter_id": str(_mid("总水")), "payment_date": "abc", "amount": "10"}))
+    assert "格式不正确" in _msg(post("/households/add", {
+        "name": "乙", "start_date": "2025-99-99", "meter_ids": str(_mid("分水A"))}))
+
+    assert _q("select * from readings where reading_date not like '____-__-__'") == []
+    assert _q("select * from receipts where entry_date not like '____-__-__'") == []
+    assert _q("select * from payments where payment_date not like '____-__-__'") == []
+
+
+def test_receipt_to_unknown_household_is_rejected_not_500(client):
+    """不存在的租户:一句提示,不是 500。"""
+    r = client.post("/receipts/add", data={
+        "household_id": "9999", "entry_date": "2025-05-01", "amount": "10"},
+        follow_redirects=False)
+    assert r.status_code == 303
+    assert "租户不存在" in _msg(r)

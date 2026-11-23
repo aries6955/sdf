@@ -3,6 +3,8 @@
 这三处都是把已有事实摆到页面上,口径必须与台账同一处推导,不能另算一套。
 """
 
+from tests.htmlq import block_of
+
 
 def _home(client):
     return client.get("/").text
@@ -35,10 +37,11 @@ def test_readings_show_previous_value_same_meter(client):
                                        "new_base_value": "0"})
     _add(client, "分水B", "2025-03-01", 20)
     html = client.get("/readings").text
-    # 新表那条的上期读数应是 0(同表上一条),不是旧表的 130
-    i = html.find("<td>分水B</td>")
+    # 只在抄表记录表里找,新增抄表表单也会出现表名
+    table = block_of(html, 'id="readingsTable"')
+    i = table.find("<td>分水B</td>")
     assert i > 0, "表里应有新表的读数行"
-    row = html[i:i + 1400]
+    row = table[i:i + 1400]
     assert '<span class="view">0</span>' in row, row
 
 
@@ -137,7 +140,7 @@ def test_readings_show_three_phase_previous(client):
     _add(client, "分电A", "2025-03-01", (150, 160, 170))
     html = client.get("/readings").text
     # 第二条的上期应是 120/130/140
-    assert "120/130/140" in html
+    assert "120 / 130 / 140" in html
 
 
 def test_statistics_shows_three_phase_readings(client):
@@ -147,7 +150,7 @@ def test_statistics_shows_three_phase_readings(client):
     _move_in(client, "甲", [("分电A", (100, 100, 100), 1)])
     _add(client, "分电A", "2025-02-01", (120, 130, 140))
     html = client.get("/statistics").text
-    assert "100/100/100" in html and "120/130/140" in html
+    assert "100 / 100 / 100" in html and "120 / 130 / 140" in html
 
 
 def test_confirm_is_a_card_not_browser_dialog(client):

@@ -25,7 +25,7 @@ BASES = {
     "101电表": ("2025-01-01", 1000),
     "102水表": ("2025-01-01", 150),
     "103水表": ("2025-01-01", 80),
-    "103电表": ("2025-01-01", 300),
+    "103电表": ("2025-01-01", 300, (100, 100, 100)),
 }
 
 # (租户, 入住日期, [(表, 读数, 单价)])  三相表读数为元组
@@ -86,11 +86,12 @@ def load_sample(conn) -> None:
     ids: dict[str, int] = {}
     for name, mtype, level, main, phase in METERS:
         b = BASES.get(name)
+        parts = b[2] if b and len(b) > 2 else (None, None, None)
         cur = conn.execute(
             "INSERT INTO meters(name,meter_type,level,main_meter_id,phase,base_value,"
-            "installed_on) VALUES (?,?,?,?,?,?,?)",
+            "base_r1,base_r2,base_r3,installed_on) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (name, mtype, level, ids.get(main) if main else None, phase,
-             b[1] if b else None, b[0] if b else "2025-01-01"))
+             b[1] if b else None, *parts, b[0] if b else "2025-01-01"))
         ids[name] = cur.lastrowid
 
     lines: dict[str, int] = {}
@@ -151,14 +152,12 @@ def _split(value) -> tuple:
 def _check_out(conn, ids, outs, d):
     """示例专用:一次退掉该租户的多条线。outs 为 [(表名, parts)]。"""
     from . import tenancy
+    from .reading_index import last_of_line
 
     seats = []
     for meter_name, parts in outs:
         meter = _meter(conn, ids, meter_name)
         line = conn.execute("SELECT * FROM lines WHERE id=?", (meter["line_id"],)).fetchone()
-        price = conn.execute(
-            "SELECT tenant_price FROM readings WHERE line_id=? "
-            "ORDER BY reading_date DESC, id DESC LIMIT 1",
-            (line["id"],)).fetchone()["tenant_price"]
+        price = last_of_line(conn, line["id"])["tenant_price"]
         seats.append((line, meter["id"], parts, price))
     tenancy.check_out(conn, out_date=d, outs=seats)

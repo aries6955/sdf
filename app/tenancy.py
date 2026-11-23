@@ -4,7 +4,7 @@
 HTTP 路由与示例数据是这条 seam 的两个 adapter,因此示例数据不再自带一套平行实现。
 """
 
-from .billing import line_readings
+from .reading_index import last_of_meter, readings_on_line
 from .readings import ReadingRejected, insert
 
 
@@ -17,9 +17,11 @@ def move_in(conn, *, household_id: int, start_date: str, seats) -> list[int]:
             raise ReadingRejected(f"「{meter['name']}」已换下,不能分配")
         if meter["line_id"]:
             raise ReadingRejected(f"「{meter['name']}」现在有人在用,请先给上一任退租")
-        last = conn.execute(
-            "SELECT value FROM readings WHERE meter_id=? "
-            "ORDER BY reading_date DESC, id DESC LIMIT 1", (meter["id"],)).fetchone()
+        # 有分表挂在它下面的表是汇总口径,租户不能直接用
+        if conn.execute("SELECT 1 FROM meters WHERE main_meter_id=?",
+                        (meter["id"],)).fetchone():
+            raise ReadingRejected(f"「{meter['name']}」下面挂着分表,是总表口径,不能分配给租户")
+        last = last_of_meter(conn, meter["id"])
         if last and parts[0] < last["value"]:
             raise ReadingRejected(
                 f"「{meter['name']}」的读数 {parts[0]} 小于该表上次读数 {last['value']},请核对")
@@ -44,7 +46,7 @@ def check_out(conn, *, out_date: str, outs) -> None:
     outs: [(line, meter_id, parts, price)]。结算只要求算清差额,不要求尾款已收。
     """
     for line, meter_id, parts, _price in outs:
-        rows = line_readings(conn, line["id"])
+        rows = readings_on_line(conn, line["id"])
         if not rows:
             raise ReadingRejected("该计量线没有读数,无法退租")
         last = rows[-1]
@@ -79,14 +81,13 @@ def swap_meter(conn, *, old_meter, new_meter, switch_date: str,
         conn.execute("UPDATE meters SET main_meter_id=? WHERE main_meter_id=?",
                      (new_meter["id"], old_meter["id"]))
         conn.execute("UPDATE meters SET retired_on=? WHERE id=?", (switch_date, old_meter["id"]))
-        conn.execute("UPDATE meters SET base_value=NULL WHERE id=?", (new_meter["id"],))
     else:
         line = conn.execute(
             "SELECT * FROM lines WHERE id=? AND move_out_date IS NULL",
             (old_meter["line_id"],)).fetchone() if old_meter["line_id"] else None
         if not line:
             raise ReadingRejected("旧表当前没有租户在用,直接把它换下即可不留账期")
-        rows = line_readings(conn, line["id"])
+        rows = readings_on_line(conn, line["id"])
         last = rows[-1] if rows else None
         if last:
             if switch_date <= last["reading_date"]:

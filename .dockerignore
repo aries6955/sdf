@@ -1,0 +1,25 @@
+# 构建上下文只留运行必需文件;.venv / .git / 截图 / 数据库都在本机,别送进守护进程
+.venv/
+.git/
+.gitignore
+.github/
+.tmp/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+data.sqlite3
+data.sqlite3.bak*
+password.txt
+backups/
+tests/
+scripts/
+docs/
+.scratch/
+.agents/
+.claude/
+skills-lock.json
+DESIGN.md
+GLOSSARY.md
+AGENTS.md
+docker-compose.yml

@@ -2,7 +2,7 @@
 {% block body %}
 <div class="note">
   <b>这里只做整体重置。</b>
-  租户与表请在左侧「系统 → 租户」「系统 → 表管理」中维护;表在表管理里建好并录装表读数,租户入住时只能挑已装好的空表。
+  租户与表在上方「租户」「表管理」两个标签中维护;表在表管理里建好并录装表读数,租户入住时只能挑已装好的空表。
 </div>
 {% if bad %}
 <div class="flash err" role="status">发现 {{ bad|length }} 处文本可能是乱码(写入时编码出错):{{ bad[:8]|join('、') }}。建议清除后用示例数据重新录入。</div>
@@ -50,11 +50,34 @@
 
 <section class="card">
   <h2>清空所有数据</h2>
-  <p class="hint">会删除租户、表、计量线、抄表、应收、收款、缴费、换表与设置,无法撤销。</p>
+  <p class="hint">会删除租户、表、计量线、抄表、应收、收款、缴费、换表与设置。清空前会自动备份,可从下方恢复。</p>
   <div class="actions">
-    <form method="post" action="/init/clear" data-confirm="确定要清空所有数据吗?将删除:租户、表、计量线、抄表、应收、收款、缴费、换表、设置。此操作无法撤销。">
-      <button class="danger" type="submit">清空所有数据</button>
-    </form>
+    <form method="post" action="/init/clear" data-confirm="确定要清空所有数据吗?将删除:租户、表、计量线、抄表、应收、收款、缴费、换表、设置。清空前会自动备份。">
+      <button class="danger" type="submit">清空所有数据</button></form>
+    <form method="post" action="/init/backup">
+      <button class="ghost" type="submit">立即备份</button></form>
   </div>
+  {% if backups %}
+  <div class="card-section">
+    <p class="card-section-title">备份列表(恢复将整库覆盖,恢复之后录入的数据会丢失)</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>备份文件</th><th>时间</th><th class="num">大小(字节)</th><th>操作</th></tr></thead>
+        <tbody>
+        {% for b in backups %}
+          <tr>
+            <td>{{ b.name }}</td>
+            <td>{{ b.time }}</td>
+            <td class="num">{{ '{:,}'.format(b.size) }}</td>
+            <td><form method="post" action="/init/restore" data-confirm="从「{{ b.name }}」恢复?当前数据会被整库覆盖,恢复之后录入的数据将丢失。">
+              <input type="hidden" name="name" value="{{ b.name }}">
+              <button class="warn small" type="submit">恢复</button></form></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 </section>
 {% endblock %}

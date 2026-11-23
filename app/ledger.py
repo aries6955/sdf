@@ -7,6 +7,8 @@
 这样任何时刻都能从事实重算出同一个结果。
 """
 
+from .reading_index import latest_meter_names
+
 EPS = 0.005
 
 
@@ -17,13 +19,13 @@ def _entries(conn, household_id: int):
 
 
 def _receivables(conn, household_id: int):
-    return conn.execute(
-        "SELECT r.*, l.meter_type, l.label, "
-        "(SELECT m.name FROM meters m WHERE m.id = (SELECT rd.meter_id FROM readings rd "
-        "  WHERE rd.line_id = l.id ORDER BY rd.reading_date DESC, rd.id DESC LIMIT 1)) AS meter_name "
-        "FROM receivables r JOIN lines l ON r.line_id = l.id "
+    rows = conn.execute(
+        "SELECT r.*, l.meter_type, l.label FROM receivables r "
+        "JOIN lines l ON r.line_id = l.id "
         "WHERE r.household_id = ? ORDER BY r.period_end, r.id",
         (household_id,)).fetchall()
+    names = latest_meter_names(conn, {x["line_id"] for x in rows})
+    return [{**dict(x), "meter_name": names.get(x["line_id"], "")} for x in rows]
 
 
 def _place(net_paid: float, due_rows) -> list[float]:
@@ -47,11 +49,11 @@ def _net_paid(conn, household_id: int) -> float:
     return round(row[0], 2)
 
 
-def household_ledger(conn, household_id: int) -> dict:
-    """某租户的完整账务:每笔应收 + 冲抵结果 + 余额,以及合计。"""
-    due_rows = _receivables(conn, household_id)
-    entries = _entries(conn, household_id)
+def _settle(due_rows, entries) -> dict:
+    """纯函数:一组应收 + 一组收退款 → 逐期冲抵结果与合计。
 
+    完整台账、账期视图、锁判定都从这里出发,因此三者的「已收」不可能漂移。
+    """
     inflow = round(sum(e["amount"] for e in entries if e["kind"] == "receipt"), 2)
     refunded = round(sum(e["amount"] for e in entries if e["kind"] == "refund"), 2)
     net_paid = round(inflow - refunded, 2)
@@ -95,6 +97,25 @@ def household_ledger(conn, household_id: int) -> dict:
     }
 
 
+def household_ledger(conn, household_id: int) -> dict:
+    """某租户的完整账务:每笔应收 + 冲抵结果 + 余额,以及合计。"""
+    return _settle(_receivables(conn, household_id), _entries(conn, household_id))
+
+
+def paid_spans(conn) -> list[dict]:
+    """全部已收到钱的账期区间,一次算完。抄表页逐行判定可编辑性时用。
+
+    与 paid_periods 同一处冲抵,只是不按户取 —— 页面有几十行时不能一行跑一遍。
+    区间带 ``line_id``:锁定是「这一条计量线的这一期」,不是「这个租户这段时间」。
+    """
+    spans = []
+    for x in ledger_view(conn)["rows"]:
+        if x["paid"] > EPS:
+            spans.append({"line_id": x["line_id"], "household_id": x["household_id"],
+                          "start": x["period_start"], "end": x["period_end"]})
+    return spans
+
+
 def paid_periods(conn, household_id: int) -> list[dict]:
     """该租户已收到钱的账期。锁定规则的唯一判据,三处调用共用(改读数、撤回、补录)。
 
@@ -102,21 +123,22 @@ def paid_periods(conn, household_id: int) -> list[dict]:
     这里只取账期的起止与金额,与完整台账共用同一处冲抵,不构造逐笔明细。
     """
     due_rows = conn.execute(
-        "SELECT period_start, period_end, amount FROM receivables "
+        "SELECT line_id, period_start, period_end, amount FROM receivables "
         "WHERE household_id = ? ORDER BY period_end, id", (household_id,)).fetchall()
     placed = _place(_net_paid(conn, household_id), due_rows)
-    return [{"start": x["period_start"], "end": x["period_end"], "paid": take}
+    return [{"line_id": x["line_id"], "household_id": household_id,
+             "start": x["period_start"], "end": x["period_end"], "paid": take}
             for x, take in zip(due_rows, placed) if take > EPS]
 
 
-def touched_by_reading(conn, household_id: int, reading_date: str,
-                       inserting: bool) -> dict | None:
-    """在某日期增/改读数会动到哪个已收款的账期;没有则返回 None。
+def span_hit(spans, line_id: int, reading_date: str, inserting: bool):
+    """在一组已付款区间里找命中。区间口径见 touched_by_reading。
 
-    插入一条读数会把包含它的账期一分为二,因此区间用开区间;
-    改或删一条读数会动到以它为端点的账期,用闭区间。
+    只比同一条计量线:同一租户水路那期已收款,不该拦住电路补录。
     """
-    for p in paid_periods(conn, household_id):
+    for p in spans:
+        if p["line_id"] != line_id:
+            continue
         inside = (p["start"] < reading_date < p["end"] if inserting
                   else p["start"] <= reading_date <= p["end"])
         if inside:
@@ -124,50 +146,65 @@ def touched_by_reading(conn, household_id: int, reading_date: str,
     return None
 
 
-def all_outstanding(conn) -> list[dict]:
-    """所有有欠款的租户,供首页与统计使用。"""
-    result = []
+def touched_by_reading(conn, line_id: int, reading_date: str,
+                       inserting: bool) -> dict | None:
+    """在某条计量线的某日期增/改读数会动到哪个已收款的账期;没有则返回 None。
+
+    插入一条读数会把包含它的账期一分为二,因此区间用开区间;
+    改或删一条读数会动到以它为端点的账期,用闭区间。
+    """
+    row = conn.execute("SELECT household_id FROM lines WHERE id=?", (line_id,)).fetchone()
+    if row is None:
+        return None
+    return span_hit(paid_periods(conn, row["household_id"]), line_id, reading_date, inserting)
+
+
+def ledger_view(conn) -> dict:
+    """全部租户逐期的应收与冲抵结果 —— 所有读侧页面的唯一入口。
+
+    冲抵每户做一次(仍是 ``_settle`` 这个纯函数),不再按页面各算一遍;
+    账期行、已收、欠款、预收余额都从这里投影出去,所以五个页面不可能各自漂移。
+    """
+    due_rows = conn.execute(
+        "SELECT r.*, l.meter_type, l.label, r.household_id AS hh FROM receivables r "
+        "JOIN lines l ON r.line_id = l.id "
+        "ORDER BY r.household_id, r.period_end, r.id").fetchall()
+    entries = conn.execute(
+        "SELECT r.*, h.name AS household_name FROM receipts r "
+        "JOIN households h ON h.id = r.household_id "
+        "ORDER BY r.entry_date, r.id").fetchall()
+    meters = latest_meter_names(conn)
+
+    grouped_due, grouped_entries = {}, {}
+    for x in due_rows:
+        grouped_due.setdefault(x["hh"], []).append(x)
+    for e in entries:
+        grouped_entries.setdefault(e["household_id"], []).append(e)
+
+    rows, households = [], []
     for h in conn.execute("SELECT id, name FROM households ORDER BY id"):
-        led = household_ledger(conn, h["id"])
-        if led["outstanding"] > EPS:
-            result.append({
-                "household_id": h["id"],
-                "household_name": h["name"],
-                "total_due": led["total_due"],
-                "total_paid": led["total_paid"],
-                "outstanding": led["outstanding"],
-            })
-    return result
+        hh, name = h["id"], h["name"]
+        led = _settle([{**dict(x), "meter_name": meters.get(x["line_id"], "")}
+                       for x in grouped_due.get(hh, [])],
+                      grouped_entries.get(hh, []))
+        for x in led["rows"]:
+            rows.append({**x, "household_id": hh, "household_name": name})
+        households.append({"household_id": hh, "household_name": name,
+                           "total_due": led["total_due"], "total_paid": led["total_paid"],
+                           "balance": led["balance"], "outstanding": led["outstanding"]})
 
-
-def settled_periods(conn) -> dict:
-    """每个账期落到的钱与欠款,按 (line_id, 账期止) 索引。
-
-    统计页把账期与收款摆在一起时用这里,冲抵仍只由 _place 这一处决定。
-    """
-    out = {}
-    for h in conn.execute("SELECT id FROM households ORDER BY id"):
-        for x in household_ledger(conn, h["id"])["rows"]:
-            out[(x["line_id"], x["period_end"])] = {
-                "paid": x["paid"], "outstanding": x["outstanding"], "settled": x["settled"]}
-    return out
-
-
-def household_summaries(conn) -> list[dict]:
-    """每户一行的台账摘要:应收、已收、欠款、预收余额。首页台账卡片用。"""
-    return [{"household_id": h["id"], "household_name": h["name"], **led}
-            for h in conn.execute("SELECT id, name FROM households ORDER BY id")
-            for led in [household_ledger(conn, h["id"])]]
-
-
-def all_ledger_rows(conn) -> list[dict]:
-    """全部租户的逐期台账:每个账期一行,带冲抵结果与租户名。
-
-    冲抵仍只在 household_ledger 里做一次,这里只把各户的行展平,不另算。
-    """
-    return [{**x, "household_id": h["id"], "household_name": h["name"]}
-            for h in conn.execute("SELECT id, name FROM households ORDER BY id")
-            for x in household_ledger(conn, h["id"])["rows"]]
+    return {
+        "rows": rows,
+        "by_key": {(x["line_id"], x["period_end"]): x for x in rows},
+        "households": households,
+        "entries": [dict(e) for e in reversed(entries)],   # 流水按登记时间倒序
+        "totals": {
+            "total_due": round(sum(x["total_due"] for x in households), 2),
+            "total_paid": round(sum(x["total_paid"] for x in households), 2),
+            "balance": round(sum(x["balance"] for x in households), 2),
+            "outstanding": round(sum(x["outstanding"] for x in households), 2),
+        },
+    }
 
 
 def tenant_due(conn, meter_type: str = None, household_id: int = None,
@@ -199,16 +236,3 @@ def paid_for(conn, meter_type: str = None, date_from: str = "",
 def margin_from(due: float, paid: float) -> float:
     """毛差:向租户应收减向部门缴出。两个数必须取自同一组筛选条件。"""
     return round(due - paid, 2)
-
-
-def totals(conn, meter_type: str = None) -> dict:
-    """首页用:向租户应收 / 冲抵后的实收 / 预收余额。"""
-    total_paid = 0.0
-    balance = 0.0
-    for (hh_id,) in conn.execute("SELECT id FROM households"):
-        led = household_ledger(conn, hh_id)
-        total_paid += led["total_paid"]
-        balance += led["balance"]
-    return {"total_due": tenant_due(conn, meter_type),
-            "total_paid": round(total_paid, 2),
-            "balance": round(balance, 2)}

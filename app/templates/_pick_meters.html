@@ -1,0 +1,54 @@
+{#
+  选表表格:新建租户与修改租户共用。
+  free_meters 是当前空着的分表;勾选并填读数即挂线。
+#}
+{% macro pick_table(meters, today, title="该住户使用哪几块表") %}
+<div class="card-section">
+  <p class="card-section-title">{{ title }}</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th style="width:48px">选用</th><th>表</th><th>类型</th><th class="num">最近读数</th><th class="num">入住读数</th><th class="num">单价</th><th>线名</th></tr></thead>
+      <tbody>
+      {% set free = meters|rejectattr('line_id')|list %}
+      {% if not free %}
+        <tr><td colspan="7" class="empty">当前无空余表。请先到「<a href="/meters">表管理</a>」新增,或给占用中的租户退租。</td></tr>
+      {% endif %}
+      {% for m in free %}
+        <tr>
+          <td><input type="checkbox" name="meter_ids" value="{{ m.id }}" id="pick-{{ m.id }}" aria-label="选用 {{ m.name }}"></td>
+          <td>{{ m.name }}</td>
+          <td>{{ type_tag(m.meter_type)|safe }}{% if m.phase == 'three' %} <span class="tag muted">三相</span>{% endif %}</td>
+          <td class="num">
+            {% if m.last_value is not none %}
+            {% if m.phase == 'three' %}
+            <div class="last-reading">
+              {% if m.last_parts and m.last_parts[0] is not none %}
+                {{ '{:,}'.format(m.last_parts[0]) }} / {{ '{:,}'.format(m.last_parts[1]) }} / {{ '{:,}'.format(m.last_parts[2]) }}
+              {% else %}— / — / —{% endif %}
+            </div>
+            {% else %}
+            <div class="last-reading">{{ '{:,}'.format(m.last_value) }}</div>
+            {% endif %}
+            <div class="last-reading-source"><span class="tag muted">{{ m.last_source }}</span></div>
+            {% else %}<span class="tag muted">—</span>{% endif %}
+          </td>
+          <td class="num">
+            {% if m.phase == 'three' %}
+            <div class="phase3">
+              <input type="number" name="base_{{ m.id }}_1" placeholder="A相" aria-label="{{ m.name }} A 相入住读数">
+              <input type="number" name="base_{{ m.id }}_2" placeholder="B相" aria-label="{{ m.name }} B 相入住读数">
+              <input type="number" name="base_{{ m.id }}_3" placeholder="C相" aria-label="{{ m.name }} C 相入住读数">
+            </div>
+            {% else %}
+            <input type="number" name="base_{{ m.id }}" placeholder="表上的读数" aria-label="{{ m.name }} 入住读数">
+            {% endif %}
+          </td>
+          <td class="num"><input type="number" step="0.0001" min="0" name="price_{{ m.id }}" value="{{ m.last_price if m.last_price is not none else '' }}" placeholder="必填" required aria-label="{{ m.name }} 单价"></td>
+          <td><input name="label_{{ m.id }}" placeholder="如 1 号房" aria-label="{{ m.name }} 线名"></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endmacro %}

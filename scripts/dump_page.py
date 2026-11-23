@@ -65,6 +65,10 @@ setTimeout(function(){{
     slug = path.strip("/").replace("/", "-").replace("?", "-") or "home"
     out = TMP / f"{slug}.html"
     TMP.mkdir(exist_ok=True)
+    # 同名旧产物先清掉:调试脚本常补 ../_probe.html 这类变体,不清会越积越多
+    for stale in TMP.glob(f"{slug}.*"):
+        if stale.suffix in (".html", ".png"):
+            stale.unlink(missing_ok=True)
     out.write_text(html, encoding="utf-8")
 
     if screenshots:

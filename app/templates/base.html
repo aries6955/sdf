@@ -3,81 +3,138 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#f5f7fb">
 <title>{{ title }} - 水电费管理</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💧</text></svg>">
+<link rel="icon" href="{{ favicon }}">
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/confirm.js" defer></script>
 </head>
 <body>
+<a class="skip-link" href="#main">跳到主内容</a>
 <aside class="sidebar" id="sidebar">
   <div class="brand">
-    <a class="name" href="/">水电费管理</a>
-    <div class="sub">总表与分表抄表计费</div>
-    <button class="collapse-btn" id="collapseBtn" type="button" title="折叠/展开侧栏" aria-label="折叠或展开侧栏">«</button>
+    <a class="logolink" href="/" title="回到首页">{{ logomark|safe }}</a>
+    <span class="logotext">
+      <a class="name" href="/">水电费管理</a>
+      <span class="sub">总表与分表抄表计费</span>
+    </span>
+    <button class="collapse-btn" id="collapseBtn" type="button" title="折叠/展开侧栏" aria-label="折叠或展开侧栏">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6.5 9 12l5.5 5.5"/></svg>
+    </button>
   </div>
-  {% for group_label, items in nav if group_label != "系统" %}
-  <nav class="sidegroup" aria-label="{{ group_label }}">
-    <div class="sidegroup-label">{{ group_label }}</div>
-    {% for key, href, text, icon in items %}
+  <nav class="sidegroup" aria-label="主导航">
+    {% for key, href, text, ico in nav %}
     <a class="navlink{{ ' active' if key == active else '' }}" href="{{ href }}" title="{{ text }}"{% if key == active %} aria-current="page"{% endif %}>
-      <span class="ico" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span>
+      <span class="ico">{{ icon(ico)|safe }}</span><span>{{ text }}</span>
     </a>
     {% endfor %}
   </nav>
-  {% endfor %}
   <div class="spacer"></div>
-  {% set sys_items = nav_map.get('系统', []) %}
-  {% set sys_ns = namespace(active=false) %}
-  {% for key, href, text, icon in sys_items %}
-    {% if key == active %}{% set sys_ns.active = true %}{% endif %}
-  {% endfor %}
-  {% set sys_active = sys_ns.active %}
-  <nav class="sidegroup sysnav{{ ' open' if sys_active else '' }}" aria-label="系统">
-    <button class="sysnav-toggle" id="sysNavToggle" type="button"
-            aria-expanded="{{ 'true' if sys_active else 'false' }}" aria-controls="sysNavLinks">
-      <span class="ico" aria-hidden="true">⚙</span><span>系统</span>
-      <span class="chev" aria-hidden="true">›</span>
-    </button>
-    <div class="sysnav-links" id="sysNavLinks">
-      {% for key, href, text, icon in sys_items %}
-      <a class="navlink{{ ' active' if key == active else '' }}" href="{{ href }}" title="{{ text }}"{% if key == active %} aria-current="page"{% endif %}>
-        <span class="ico" aria-hidden="true">{{ icon }}</span><span>{{ text }}</span>
-      </a>
-      {% endfor %}
-    </div>
+  <nav class="sidegroup" aria-label="系统">
+    <a class="navlink{{ ' active' if active in ('households', 'meters', 'init') else '' }}" href="/households" title="系统设置"{% if active in ('households', 'meters', 'init') %} aria-current="page"{% endif %}>
+      <span class="ico">{{ icon('settings')|safe }}</span><span>系统设置</span>
+    </a>
   </nav>
-  <a class="quit" href="/logout"><span class="ico" aria-hidden="true">⏻</span><span>退出登录</span></a>
+  <a class="quit" href="/logout"><span class="ico">{{ icon('power')|safe }}</span><span>退出登录</span></a>
+  <div class="ver" title="当前版本">v{{ version }}</div>
 </aside>
 <script>
 (function(){
   var KEY='sdf_sidebar_collapsed';
   var btn=document.getElementById('collapseBtn');
   if(!btn) return;
-  if(localStorage.getItem(KEY)==='1'){document.body.classList.add('collapsed');btn.textContent='>>';}
+  if(localStorage.getItem(KEY)==='1'){document.body.classList.add('collapsed');}
   btn.addEventListener('click',function(){
     var c=document.body.classList.toggle('collapsed');
-    btn.textContent=c?'>>':'<<';
     localStorage.setItem(KEY,c?'1':'0');
   });
-  // 系统分组:点按钮展开,状态记忆;当前页在系统内时服务端已加 open
-  var st=document.getElementById('sysNavToggle'), sn=document.querySelector('.sysnav');
-  if(st && sn){
-    st.addEventListener('click',function(){
-      var open=sn.classList.toggle('open');
-      st.setAttribute('aria-expanded', open?'true':'false');
-    });
-  }
 })();
 </script>
 <div class="shell">
-  <div class="content">
+  <div class="content" id="main">
     <div class="pagehead">
       <h1>{{ title }}</h1>
       {% if lead %}<p class="lead">{{ lead }}</p>{% endif %}
     </div>
-    {% if flash %}<div class="flash {{ flash[0] }}" role="status">{{ flash[1] }}</div>{% endif %}
+    {% if subtabs %}
+    <nav class="tabs" aria-label="分区">
+      {% for key, href, text in subtabs %}
+      <a class="tab{{ ' active' if subtab == key else '' }}" href="{{ href }}"{% if subtab == key %} aria-current="page"{% endif %}>{{ text }}</a>
+      {% endfor %}
+    </nav>
+    {% endif %}
     {% block body %}{% endblock %}
   </div>
 </div>
+{% if flash %}
+{# 操作结果一律弹窗:页面顶部横幅在长页面上会被推出视口,等于没提示 #}
+<div class="confirmwrap" id="flashModal">
+  <div class="confirmbox {{ 'okbox' if flash[0] == 'ok' else '' }}"
+       role="{{ 'status' if flash[0] == 'ok' else 'alertdialog' }}"
+       aria-modal="true" aria-labelledby="flashTitle">
+    <h3 id="flashTitle">{{ '操作已完成' if flash[0] == 'ok' else '操作没有成功' }}</h3>
+    <p class="confirmtext">{{ flash[1] }}</p>
+    <div class="actions">
+      <button type="button" data-flash-close>知道了</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var host = document.getElementById('flashModal');
+  if(!host) return;
+  var isOk = host.querySelector('.okbox') !== null;
+  function close(){ host.remove(); }
+  host.addEventListener('click', function(e){
+    if(e.target === host || e.target.closest('[data-flash-close]')) close();
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' || e.key === 'Enter') close();
+  });
+  if(isOk) setTimeout(close, 2200);   // 成功不挡路,自动收起
+  var btn = host.querySelector('[data-flash-close]');
+  if(btn) btn.focus({preventScroll:true});
+})();
+</script>
+{% endif %}
+<script>
+(function(){
+  // 提交筛选/保存后停在原地:整页刷新会跳回顶部,这里还原提交前的位置。
+  // 优先锚定提交按钮所在的那条筛选栏(表格上方),结果行数变化时也不会跑偏。
+  var KEY = 'sdf_anchor';
+  var full = function(box){ return box.getBoundingClientRect().top + window.scrollY; };
+
+  document.addEventListener('submit', function(e){
+    var btn = e.target.querySelector('button[type="submit"]');
+    var bar = btn && btn.closest('.filterbar');
+    var box = bar || btn && btn.closest('section');
+    sessionStorage.setItem(KEY, JSON.stringify({
+      path: location.pathname,
+      sel: bar ? '.filterbar' : 'section',
+      y: box ? Math.round(full(box)) : Math.round(window.scrollY)
+    }));
+  }, true);
+
+  var raw = sessionStorage.getItem(KEY);
+  if (!raw) return;
+  sessionStorage.removeItem(KEY);
+  var saved;
+  try { saved = JSON.parse(raw); } catch (e) { return; }
+  if (!saved || saved.path !== location.pathname) return;
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
+  var restore = function(){
+    var now = 0;
+    if (saved.sel === '.filterbar'){
+      var el = document.querySelector('.filterbar');
+      if (el) now = Math.round(full(el));
+    }
+    // 有锚点就滚到锚点原位置,否则退回保存的绝对位置
+    window.scrollTo({top: now || saved.y, left: 0, behavior: 'instant'});
+  };
+  if (document.readyState === 'complete') requestAnimationFrame(restore);
+  else window.addEventListener('load', function(){ requestAnimationFrame(restore); });
+})();
+</script>
 </body>
 </html>

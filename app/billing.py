@@ -7,13 +7,10 @@
 用量按表分段累加 —— 旧表段 (终读数 − 上次读数) + 新表段 (本次读数 − 新表基数)。
 """
 
+from .ledger import ledger_view
+from .reading_index import latest_meter_names, readings_on_line
+
 BOUNDARY_KINDS = ("move_in", "periodic", "move_out")
-
-
-def line_readings(conn, line_id: int):
-    return conn.execute(
-        "SELECT * FROM readings WHERE line_id = ? ORDER BY reading_date, id", (line_id,)
-    ).fetchall()
 
 
 def get_line(conn, line_id: int):
@@ -72,22 +69,21 @@ def _period(rows, prev, cur) -> dict:
 
 def periods_for_line(conn, line_id: int) -> list[dict]:
     """一条线的全部账期。账期只由边界读数(move_in/periodic/move_out)切分。"""
-    rows = line_readings(conn, line_id)
+    rows = readings_on_line(conn, line_id)
     boundary = [r for r in rows if r["kind"] in BOUNDARY_KINDS]
     return [_period(rows, prev, cur) for prev, cur in zip(boundary, boundary[1:])]
 
 
 def all_periods(conn, meter_type: str = None, household_id: int = None,
                 date_from: str = "", date_to: str = "") -> list[dict]:
-    """全部账期,带租户、表、线信息。"""
+    """全部账期,带租户、表、线信息。
+
+    每一期已经带上该期的 ``paid`` / ``outstanding`` / ``settled`` —— 口径与台账同一处推导。
+    页面只负责筛选与排版,不再自己决定「没配上对时该显什么」。
+    """
     sql = ("SELECT l.id AS line_id, l.household_id, l.meter_type, l.label, "
-           "h.name AS household_name, "
-           "(SELECT COALESCE(NULLIF(l.label,''), m.name) FROM meters m "
-           " WHERE m.id = (SELECT r.meter_id FROM readings r WHERE r.line_id = l.id "
-           "               ORDER BY r.reading_date DESC, r.id DESC LIMIT 1)) AS display_name, "
-           "(SELECT m.name FROM meters m WHERE m.id = (SELECT r.meter_id FROM readings r "
-           "  WHERE r.line_id = l.id ORDER BY r.reading_date DESC, r.id DESC LIMIT 1)) AS meter_name "
-           "FROM lines l JOIN households h ON l.household_id = h.id")
+           "h.name AS household_name FROM lines l "
+           "JOIN households h ON l.household_id = h.id")
     where, params = [], []
     if meter_type:
         where.append("l.meter_type = ?")
@@ -97,21 +93,36 @@ def all_periods(conn, meter_type: str = None, household_id: int = None,
         params.append(household_id)
     if where:
         sql += " WHERE " + " AND ".join(where)
+    lines = [dict(x) for x in conn.execute(sql + " ORDER BY l.id", params)]
+    names = latest_meter_names(conn)
+    settled = ledger_view(conn)["by_key"]
     rows = []
-    for line in conn.execute(sql + " ORDER BY l.id", params):
+    for line in lines:
+        name = line["label"] or names.get(line["line_id"], "")
         for p in periods_for_line(conn, line["line_id"]):
             if date_from and p["end"] < date_from:
                 continue
             if date_to and p["end"] > date_to:
                 continue
+            s = settled.get((p["line_id"], p["end"]))
             rows.append({**p, "household_id": line["household_id"],
                          "household_name": line["household_name"],
                          "meter_type": line["meter_type"], "label": line["label"],
-                         "display_name": line["display_name"] or "",
-                         "meter_name": line["meter_name"] or ""})
+                         "display_name": name,
+                         "meter_name": names.get(line["line_id"], ""),
+                         "paid": s["paid"] if s else 0.0,
+                         "outstanding": s["outstanding"] if s else round(p["amount"], 2),
+                         "settled": s["settled"] if s else False})
     rows.sort(key=lambda r: (r["end"], r["line_id"]))
     return rows
 
+
+
+def period_of(conn, line_id: int, period_end: str):
+    """该线以 period_end 收尾的那一期应收记录;没有则 None。"""
+    return conn.execute(
+        "SELECT * FROM receivables WHERE line_id=? AND period_end=?",
+        (line_id, period_end)).fetchone()
 
 
 def recompute_line(conn, line_id: int) -> None:

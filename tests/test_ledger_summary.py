@@ -61,3 +61,34 @@ def test_margin_uses_the_same_filter_as_the_page(env):
     due_jia = tenant_due(c, household_id=hh["甲"])
     assert due_jia == 300.0
     assert margin_from(due_jia, paid_for(c)) == 300.0 - 844.0
+
+
+def test_view_agrees_with_per_household_ledger(env):
+    """全量账期视图与逐户台账逐分一致 —— 五个页面共用同一份事实。"""
+    from app.ledger import household_ledger, ledger_view
+
+    c, _hh = env
+    view = ledger_view(c)
+    per = {x["household_name"]: household_ledger(c, x["household_id"])
+           for x in view["households"]}
+    for row in view["rows"]:
+        same = per[row["household_name"]]
+        match = [x for x in same["rows"]
+                 if x["line_id"] == row["line_id"] and x["period_end"] == row["period_end"]]
+        assert match and match[0]["paid"] == row["paid"]
+        assert match[0]["outstanding"] == row["outstanding"]
+    assert view["totals"]["total_due"] == round(sum(x["total_due"] for x in per.values()), 2)
+
+
+def test_paid_spans_matches_paid_periods(env):
+    """抄表页的批量锁判定与逐户锁判定给同一组区间。"""
+    from app.ledger import paid_periods, paid_spans
+
+    c, hh = env
+    for x in paid_spans(c):
+        assert x in [{"household_id": hh, **p} for p in paid_periods(c, hh[x["household_id"]])] \
+            if False else True
+    # 简化:两边算出的区间集合必须相等
+    spans = {(x["household_id"], x["start"], x["end"]) for x in paid_spans(c)}
+    per = {(k, p["start"], p["end"]) for k in hh.values() for p in paid_periods(c, k)}
+    assert spans == per

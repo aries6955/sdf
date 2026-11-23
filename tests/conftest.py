@@ -48,12 +48,14 @@ def _hid(name):
     return row["id"] if row else None
 
 
-def _add_meter(client, name, kind="water", level="sub", main=None, base="0",
+def _add_meter(client, name, kind="water", level="sub", main=None, base=None,
                base_date="2025-01-01", phase="single", **kw):
-    """建表。分表必须给装表读数。"""
+    """建表。分表必须给装表读数,总表不给就留空。"""
+    if base is None:
+        base = "0" if level == "sub" else ""
     data = {"name": name, "meter_type": kind, "level": level,
             "installed_on": base_date, "phase": phase, **kw}
-    if level == "sub":
+    if base:
         if phase == "three":
             parts = base.split("/")
             data.update({"base_1": parts[0], "base_2": parts[1], "base_3": parts[2]})

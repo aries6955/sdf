@@ -1,7 +1,10 @@
+import os
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data.sqlite3"
+# 数据目录:SDF_DATA_DIR 可指向挂载卷(Docker 里是 /data),默认留在项目目录
+DATA_DIR = Path(os.environ.get("SDF_DATA_DIR") or Path(__file__).resolve().parent.parent)
+DB_PATH = DATA_DIR / "data.sqlite3"
 
 
 # 模型要点见 GLOSSARY.md 与 docs/adr/0012..0023。
@@ -43,6 +46,9 @@ CREATE TABLE IF NOT EXISTS meters (
     main_meter_id INTEGER REFERENCES meters(id),
     phase TEXT NOT NULL DEFAULT 'single' CHECK (phase IN ('single', 'three')),
     base_value INTEGER,
+    base_r1 INTEGER,        -- 三相表的分相装表读数;base_value = r1+r2+r3
+    base_r2 INTEGER,
+    base_r3 INTEGER,
     installed_on TEXT,      -- 装表日期;装表读数(base_value)当天的日期
     retired_on TEXT,
     line_id INTEGER REFERENCES lines(id),
@@ -122,16 +128,36 @@ CREATE TABLE IF NOT EXISTS meter_switches (
 """
 
 
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+class Connection(sqlite3.Connection):
+    """事务边界:with 退出时提交或回滚,**并关闭**。
+
+    sqlite3 自带的 __exit__ 只提交不关闭,连接要靠引用计数在 GC 时才回收;
+    而调用方读的是 `with connect() as conn`,天然以为连接到此为止。
+    """
+
+    def __exit__(self, *exc_info):
+        try:
+            return super().__exit__(*exc_info)
+        finally:
+            self.close()
+
+
+def connect() -> Connection:
+    conn = sqlite3.connect(DB_PATH, factory=Connection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
 def init_db() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)   # 挂载卷可能是空目录
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # 老库补列:原先只存三相合计,分相留空让用户编辑时补录。
+        cols = {x["name"] for x in conn.execute("PRAGMA table_info(meters)")}
+        for col in ("base_r1", "base_r2", "base_r3"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE meters ADD COLUMN {col} INTEGER")
 
 
 def get_setting(conn: sqlite3.Connection, key: str, default: str = "") -> str:

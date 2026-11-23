@@ -1,99 +1,102 @@
 {% extends "base.html" %}
 {% block body %}
 <section class="card">
+  <h2>账期合计</h2>
+  <p class="hint">基于当前筛选的全部账期,不只看某一页。筛选在下方「抄表记录」里。</p>
+  <div class="stats compact">
+    <div class="stat tone-sky"><div class="k">水用量</div><div class="v">{{ '{:,}'.format(total_usage_w) }}</div></div>
+    <div class="stat tone-amber"><div class="k">电用量</div><div class="v">{{ '{:,}'.format(total_usage_e) }}</div></div>
+    <div class="stat tone-violet"><div class="k">应收合计</div><div class="v">{{ money(total_amount) }}<span class="u"> 元</span></div></div>
+    <div class="stat tone-teal"><div class="k">账期数</div><div class="v">{{ rows|length }}</div></div>
+  </div>
+</section>
+
+<section class="card">
   <h2>新增抄表</h2>
-  <p class="hint">按上次抄表日期从旧到新排列,最久没抄的排在最前。抄表即当场算出本账期应收。</p>
-  {% if not lines %}
-  <p class="empty">还没有在用的计量线。先到「<a href="/households">租户</a>」为租户办理入住。</p>
+  <p class="hint">先选租户,再逐块填该户的在用表。抄表即当场算出本账期应收,一次提交全部保存。</p>
+  {% if not by_household %}
+  <p class="empty">还没有在用的计量线。先到「<a href="/households">系统设置 · 租户</a>」为租户办理入住。</p>
   {% else %}
   <form method="post" action="/readings/add">
     <div class="formgrid">
-      <div class="field"><label for="r-line">计量线</label>
-        <select id="r-line" name="line_id" required>
-          {% for l in lines %}<option value="{{ l.id }}" data-meter="{{ l.meter.id }}" data-phase="{{ l.meter.phase or 'single' }}" data-price="{{ l.last_price }}" data-last="上次 {{ l.last_date }} · {{ '{:,}'.format(l.last_value) }}">{{ l.household_name }} · {{ type_name(l.meter_type) }}{% if l.label %}·{{ l.label }}{% endif %} · {{ l.meter.name }}</option>{% endfor %}
-        </select>
-        <span class="assist key" id="r-last"></span></div>
-      <div class="field"><label for="r-meter">本次读数取自</label>
-        <select id="r-meter" name="meter_id" required>
-          {% for l in lines %}<option value="{{ l.meter.id }}" data-line="{{ l.id }}">{{ l.meter.name }}</option>{% endfor %}
-        </select>
-        <span class="assist">换表后必须选新表</span></div>
-      <div class="field"><label for="r-date">抄表日期</label><input id="r-date" type="date" name="reading_date" value="{{ today }}" required></div>
-      <div class="field" id="singleField"><label for="r-value">本次读数</label><input id="r-value" type="number" name="value" placeholder="表上显示的数字"></div>
-      <div class="field" id="phaseFields" style="display:none" role="group" aria-labelledby="phaseLbl">
-        <span class="fieldlabel" id="phaseLbl">三相读数(相加计费)</span>
-        <div class="phase3">
-          <input id="r-v1" type="number" name="value_1" placeholder="A相" aria-label="A 相读数">
-          <input id="r-v2" type="number" name="value_2" placeholder="B相" aria-label="B 相读数">
-          <input id="r-v3" type="number" name="value_3" placeholder="C相" aria-label="C 相读数">
-        </div>
-        <span class="assist" id="phaseSum">合计:—</span></div>
-      <div class="field"><label for="r-price">租户单价</label>
-        <input id="r-price" type="number" step="0.0001" name="tenant_price" value="{{ lines[0].last_price }}">
-        <span class="assist">房东向租户收取的单价,整段生效;默认沿用上次,可直接改</span></div>
-      <div class="field"><label for="r-note">备注</label><input id="r-note" name="note" placeholder="选填"></div>
+      <div class="field"><label for="r-hh">租户</label>
+        <select id="r-hh" name="household_id" required>
+          {% for hid, ls in by_household.items() %}
+          <option value="{{ hid }}">{{ ls[0].household_name }}</option>
+          {% endfor %}
+        </select></div>
+      <div class="field"><label for="r-date">抄表日期</label>
+        <input id="r-date" type="date" name="reading_date" value="{{ today }}" required></div>
+      <div class="field"><label for="r-note">备注</label>
+        <input class="note-input" id="r-note" name="note" placeholder="选填,应用于本次全部表"></div>
     </div>
+    {% for hid, ls in by_household.items() %}
+    <div class="card-section" data-hh="{{ hid }}"{% if not loop.first %} hidden{% endif %}>
+      <p class="card-section-title">{{ ls[0].household_name }} 在用表 {{ ls|length }} 块</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>类型</th><th>线名</th><th>表</th><th>上次读数</th><th class="num">本次读数</th><th class="num">单价</th></tr></thead>
+          <tbody>
+          {% for l in ls %}
+            <tr>
+              <td>{{ type_tag(l.meter_type)|safe }}{% if l.meter.phase == 'three' %}<div><span class="tag muted">三相</span></div>{% endif %}</td>
+              <td>{{ l.label or '—' }}</td>
+              <td>{{ l.meter.name }}</td>
+              <td>
+                <div class="last-reading">
+                  {% if l.meter.phase == 'three' and l.last_parts and l.last_parts[0] is not none %}
+                  {{ '{:,}'.format(l.last_parts[0]) }} / {{ '{:,}'.format(l.last_parts[1]) }} / {{ '{:,}'.format(l.last_parts[2]) }}
+                  {% elif l.meter.phase == 'three' %}— / — / —
+                  {% else %}{{ '{:,}'.format(l.last_value) }}{% endif %}
+                </div>
+                <div class="last-reading-source">
+                  <span class="tag muted">{{ l.last_date }}</span>
+                  {% if l.meter.phase == 'three' and l.last_parts_source %}
+                  <span class="tag muted">{{ l.last_parts_source }}</span>
+                  {% endif %}
+                </div>
+              </td>
+              <td class="num">
+                {% if l.meter.phase == 'three' %}
+                <div class="phase3">
+                  <input type="number" name="value_{{ l.id }}_1" placeholder="A相" aria-label="{{ l.meter.name }} A 相读数">
+                  <input type="number" name="value_{{ l.id }}_2" placeholder="B相" aria-label="{{ l.meter.name }} B 相读数">
+                  <input type="number" name="value_{{ l.id }}_3" placeholder="C相" aria-label="{{ l.meter.name }} C 相读数">
+                </div>
+                {% else %}
+                <input type="number" name="value_{{ l.id }}" placeholder="读数" aria-label="{{ l.meter.name }} 本次读数">
+                {% endif %}
+                <input type="hidden" name="meter_{{ l.id }}" value="{{ l.meter.id }}">
+              </td>
+              <td class="num"><input type="number" step="0.0001" name="price_{{ l.id }}" value="{{ l.last_price }}" aria-label="{{ l.meter.name }} 单价"></td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endfor %}
     <div class="actions"><button type="submit">保存抄表</button></div>
   </form>
   <script>
   (function(){
-    var lineSel=document.getElementById('r-line'), meterSel=document.getElementById('r-meter');
-    var single=document.getElementById('singleField'), phase=document.getElementById('phaseFields');
-    var v1=document.getElementById('r-v1'), v2=document.getElementById('r-v2'), v3=document.getElementById('r-v3');
-    var sum=document.getElementById('phaseSum'), price=document.getElementById('r-price');
-    var lastHint=document.getElementById('r-last');
-    function syncMeters(){
-      var lid=lineSel.value;
-      for(var i=0;i<meterSel.options.length;i++){
-        var o=meterSel.options[i];
-        o.hidden = o.dataset.line !== lid;
-      }
-      var first=null;
-      for(var j=0;j<meterSel.options.length;j++){
-        if(!meterSel.options[j].hidden){first=meterSel.options[j];break;}
-      }
-      if(first) meterSel.value=first.value;
-      syncPhase();
+    var sel=document.getElementById('r-hh');
+    if(!sel) return;
+    var sections=document.querySelectorAll('[data-hh]');
+    function sync(){
+      sections.forEach(function(s){ s.hidden = s.dataset.hh !== sel.value; });
     }
-    function syncPhase(){
-      var o=meterSel.options[meterSel.selectedIndex];
-      var three=o && o.dataset.phase==='three';
-      phase.style.display=three?'':'none';
-      single.style.display=three?'none':'';
-      v1.required=v2.required=v3.required=three;
-      document.getElementById('r-value').required=!three;
-      calc();
-    }
-    function calc(){
-      if(phase.style.display==='none') return;
-      sum.textContent='合计:'+(parseInt(v1.value||0)+parseInt(v2.value||0)+parseInt(v3.value||0));
-    }
-    lineSel.addEventListener('change',function(){
-      var o=lineSel.options[lineSel.selectedIndex];
-      price.value=o.dataset.price||'';
-      lastHint.textContent=o.dataset.last||'';
-      syncMeters();
-    });
-    meterSel.addEventListener('change',syncPhase);
-    [v1,v2,v3].forEach(function(x){x.addEventListener('input',calc);});
-    lineSel.dispatchEvent(new Event('change'));
+    sel.addEventListener('change', sync);
+    sync();
   })();
   </script>
   {% endif %}
 </section>
 
 <section class="card">
-  <h2>账期合计</h2>
-  <p class="hint">基于当前筛选的全部账期,不只看某一页。</p>
-  <div class="stats compact">
-    <div class="stat"><div class="k">水用量</div><div class="v">{{ '{:,}'.format(total_usage_w) }}</div></div>
-    <div class="stat"><div class="k">电用量</div><div class="v">{{ '{:,}'.format(total_usage_e) }}</div></div>
-    <div class="stat"><div class="k">应收合计</div><div class="v">{{ money(total_amount) }}<span class="u"> 元</span></div></div>
-    <div class="stat"><div class="k">账期数</div><div class="v">{{ rows|length }}</div></div>
-  </div>
-  <div class="card-section">
+  <h2>抄表记录 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
+  <div class="filterbar">
     <form method="get" action="/readings">
-      <div class="formgrid">
         <div class="field"><label for="f-hh">租户</label>
           <select id="f-hh" name="household_id"><option value="">全部租户</option>
             {% for id, n in hh_items %}<option value="{{ id }}"{% if household_id == id|string %} selected{% endif %}>{{ n }}</option>{% endfor %}
@@ -104,14 +107,13 @@
           </select></div>
         <div class="field"><label for="f-from">日期起</label><input id="f-from" type="date" name="date_from" value="{{ date_from }}"></div>
         <div class="field"><label for="f-to">日期止</label><input id="f-to" type="date" name="date_to" value="{{ date_to }}"></div>
+      <div class="actions">
+        <button type="submit">筛选</button>
+        {% if household_id or line_id or date_from or date_to %}
+        <a class="btn ghost" href="/readings">重置</a>{% endif %}
       </div>
-      <div class="actions"><button type="submit">筛选</button><a class="btn ghost" href="/readings">清除条件</a></div>
     </form>
   </div>
-</section>
-
-<section class="card">
-  <h2>读数记录 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
   <p class="hint">读数分「入住 / 抄表 / 退租 / 换表」四类。<b>已开始收款的账期不能改读数</b>,要改先删对应收款。</p>
   <div class="tablewrap">
     <table id="readingsTable">
@@ -121,15 +123,15 @@
         {% for x in detail %}
         <tr id="r{{ x.id }}">
           <td>{{ x.household_name }}</td>
-          <td><span class="tag muted">{{ type_name(x.meter_type) }}</span>{% if x.label %} {{ x.label }}{% endif %}</td>
+          <td>{{ type_tag(x.meter_type)|safe }}{% if x.label %} {{ x.label }}{% endif %}</td>
           <td>{{ x.meter_name }}</td>
           <td>
             <span class="view">{{ x.reading_date }}</span>
             {% if x.can_edit %}<input class="editonly" form="ed-{{ x.id }}" type="date" name="reading_date" value="{{ x.reading_date }}" required hidden aria-label="抄表日期">{% endif %}
           </td>
-          <td class="num"><span class="view">{{ '{:,}'.format(x.prev_value) if x.prev_value is not none else '—' }}{% if x.prev_r1 is not none %} <span class="tag muted">{{ x.prev_r1 }}/{{ x.prev_r2 }}/{{ x.prev_r3 }}</span>{% endif %}</span></td>
+          <td class="num"><span class="view">{% if x.prev_r1 is not none %}{{ '{:,}'.format(x.prev_r1) }} / {{ '{:,}'.format(x.prev_r2) }} / {{ '{:,}'.format(x.prev_r3) }}{% elif x.prev_value is not none %}{{ '{:,}'.format(x.prev_value) }}{% else %}—{% endif %}</span></td>
           <td class="num">
-            <span class="view">{{ '{:,}'.format(x.value) }}{% if x.r1 is not none %} <span class="tag muted">{{ x.r1 }}/{{ x.r2 }}/{{ x.r3 }}</span>{% endif %}</span>
+            <span class="view">{% if x.r1 is not none %}{{ '{:,}'.format(x.r1) }} / {{ '{:,}'.format(x.r2) }} / {{ '{:,}'.format(x.r3) }}{% else %}{{ '{:,}'.format(x.value) }}{% endif %}</span>
             {% if x.can_edit %}
               {% if x.phase == 'three' %}
               <span class="editonly phase3" hidden>

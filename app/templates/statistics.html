@@ -1,43 +1,15 @@
 {% extends "base.html" %}
 {% block body %}
-<section class="card">
-  <h2>筛选条件</h2>
-  <p class="hint">账期按抄表日期划分。「账期起 / 止」筛选的是每条账期的结束日期。缴费与收费按同一日期区间各自筛选,不做周期对齐假设。</p>
-  <form method="get" action="/statistics">
-    <div class="formgrid">
-      <div class="field"><label for="s-type">统计范围</label>
-        <select id="s-type" name="type">
-          <option value="all"{% if type == 'all' %} selected{% endif %}>水 + 电</option>
-          <option value="water"{% if type == 'water' %} selected{% endif %}>只看水</option>
-          <option value="electricity"{% if type == 'electricity' %} selected{% endif %}>只看电</option>
-        </select></div>
-      <div class="field"><label for="s-hh">租户</label>
-        <select id="s-hh" name="household_id"><option value="">全部租户</option>
-          {% for x in households %}<option value="{{ x.id }}"{% if household_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
-        </select></div>
-      <div class="field"><label for="s-line">计量线</label>
-        <select id="s-line" name="line_id"><option value="">全部计量线</option>
-          {% for x in lines %}<option value="{{ x.id }}"{% if line_id == x.id|string %} selected{% endif %}>{{ x.household_name }} · {{ type_name(x.meter_type) }}{% if x.meter_name %} · {{ x.meter_name }}{% endif %}</option>{% endfor %}
-        </select></div>
-      <div class="field"><label for="s-from">账期起</label><input id="s-from" type="date" name="date_from" value="{{ date_from }}"></div>
-      <div class="field"><label for="s-to">账期止</label><input id="s-to" type="date" name="date_to" value="{{ date_to }}"></div>
-    </div>
-    <div class="actions">
-      <button type="submit">查询</button>
-      <a class="btn ghost" href="/statistics">清除条件</a>
-      <a class="btn ghost" href="/statistics/pdf?{{ qs }}">导出 PDF</a>
-    </div>
-  </form>
-</section>
+<p class="hint">账期按抄表日期划分。「账期起 / 止」筛选的是每条账期的结束日期。缴费与收费按同一日期区间各自筛选,不做周期对齐假设。</p>
 
 <div class="stats">
-  <div class="stat"><div class="k">水用量</div><div class="v">{{ '{:,}'.format(total_water) }}</div></div>
-  <div class="stat"><div class="k">电用量</div><div class="v">{{ '{:,}'.format(total_elec) }}</div></div>
-  <div class="stat"><div class="k">向租户应收</div><div class="v">{{ money(total_amount) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">向租户已收</div><div class="v">{{ money(total_paid) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">未收</div><div class="v">{{ money(total_outstanding) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">向部门缴费</div><div class="v">{{ money(paid_total) }}<span class="u"> 元</span></div></div>
-  <div class="stat"><div class="k">毛差</div><div class="v">{{ money(margin) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-sky"><div class="k">水用量</div><div class="v">{{ '{:,}'.format(total_water) }}</div></div>
+  <div class="stat tone-amber"><div class="k">电用量</div><div class="v">{{ '{:,}'.format(total_elec) }}</div></div>
+  <div class="stat tone-violet"><div class="k">向租户应收</div><div class="v">{{ money(total_amount) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-positive"><div class="k">向租户已收</div><div class="v">{{ money(total_paid) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-negative"><div class="k">未收</div><div class="v">{{ money(total_outstanding) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-brand"><div class="k">向部门缴费</div><div class="v">{{ money(paid_total) }}<span class="u"> 元</span></div></div>
+  <div class="stat tone-teal"><div class="k">毛差</div><div class="v">{{ money(margin) }}<span class="u"> 元</span></div></div>
 </div>
 
 {% if gaps %}
@@ -59,6 +31,32 @@
 
 <section class="card">
   <h2>账期明细 · 第 {{ page }} 页(共 {{ pages }} 页)</h2>
+<div class="filterbar">
+  <form method="get" action="/statistics">
+    <div class="field"><label for="s-type">统计范围</label>
+      <select id="s-type" name="type">
+        <option value="all"{% if type == 'all' %} selected{% endif %}>水 + 电</option>
+        <option value="water"{% if type == 'water' %} selected{% endif %}>只看水</option>
+        <option value="electricity"{% if type == 'electricity' %} selected{% endif %}>只看电</option>
+      </select></div>
+    <div class="field"><label for="s-hh">租户</label>
+      <select id="s-hh" name="household_id"><option value="">全部租户</option>
+        {% for x in households %}<option value="{{ x.id }}"{% if household_id == x.id|string %} selected{% endif %}>{{ x.name }}</option>{% endfor %}
+      </select></div>
+    <div class="field"><label for="s-line">计量线</label>
+      <select id="s-line" name="line_id"><option value="">全部计量线</option>
+        {% for x in lines %}<option value="{{ x.id }}"{% if line_id == x.id|string %} selected{% endif %}>{{ x.household_name }} · {{ type_name(x.meter_type) }}{% if x.meter_name %} · {{ x.meter_name }}{% endif %}</option>{% endfor %}
+      </select></div>
+    <div class="field"><label for="s-from">账期起</label><input id="s-from" type="date" name="date_from" value="{{ date_from }}"></div>
+    <div class="field"><label for="s-to">账期止</label><input id="s-to" type="date" name="date_to" value="{{ date_to }}"></div>
+    <div class="actions">
+      <button type="submit">查询</button>
+      {% if household_id or line_id or date_from or date_to or type != 'all' %}
+      <a class="btn ghost" href="/statistics">重置</a>{% endif %}
+      <a class="btn ghost" href="/statistics/pdf?{{ qs }}">导出 PDF</a>
+    </div>
+  </form>
+</div>
   <div class="tablewrap">
     <table>
       <thead><tr><th>租户</th><th>类型</th><th>线名</th><th>账期起</th><th>账期止</th><th class="num">上期读数</th><th class="num">本期读数</th><th class="num">用量</th><th class="num">单价</th><th class="num">应收(元)</th><th class="num">已收(元)</th><th class="num">未收(元)</th><th>状态</th></tr></thead>
@@ -67,12 +65,12 @@
         {% for x in page_rows %}
         <tr>
           <td>{{ x.household_name }}</td>
-          <td>{{ type_name(x.meter_type) }}</td>
+          <td>{{ type_tag(x.meter_type)|safe }}</td>
           <td>{{ x.display_name or '—' }}</td>
           <td>{{ x.start }}</td>
           <td>{{ x.end }}</td>
-          <td class="num">{{ '{:,}'.format(x.start_value) }}{% if x.start_r1 is not none %} <span class="tag muted">{{ x.start_r1 }}/{{ x.start_r2 }}/{{ x.start_r3 }}</span>{% endif %}</td>
-          <td class="num">{{ '{:,}'.format(x.end_value) }}{% if x.end_r1 is not none %} <span class="tag muted">{{ x.end_r1 }}/{{ x.end_r2 }}/{{ x.end_r3 }}</span>{% endif %}</td>
+          <td class="num">{% if x.start_r1 is not none %}{{ '{:,}'.format(x.start_r1) }} / {{ '{:,}'.format(x.start_r2) }} / {{ '{:,}'.format(x.start_r3) }}{% else %}{{ '{:,}'.format(x.start_value) }}{% endif %}</td>
+          <td class="num">{% if x.end_r1 is not none %}{{ '{:,}'.format(x.end_r1) }} / {{ '{:,}'.format(x.end_r2) }} / {{ '{:,}'.format(x.end_r3) }}{% else %}{{ '{:,}'.format(x.end_value) }}{% endif %}</td>
           <td class="num">{{ '{:,}'.format(x.usage) }}</td>
           <td class="num">{{ x.unit_price }}</td>
           <td class="num">{{ money(x.amount) }}</td>

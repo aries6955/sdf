@@ -13,6 +13,19 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 数据保存在项目目录的 `data.sqlite3`,由单进程独占写入。
 
+## Docker 部署
+
+镜像由 GitHub Actions 推到 `ghcr.io/aries6955/sdf:latest`,推 `main` 即重建。
+
+```bash
+docker compose up -d              # 端口 8536,数据落在命名卷 sdf-data
+```
+
+首次登录密码由 `SDF_PASSWORD` 决定(默认 `admin123`),登录后请到「设置」改;
+`SDF_DATA_DIR=/data` 指向命名卷 `sdf-data`(里面是 `data.sqlite3`、`password.txt` 与 `backups/`),
+`docker compose down` 后重建容器不丢数据。要直接看文件就 `docker cp sdf:/data ./data`,
+或者在 compose 里把它改成 `- ./data:/data` 并先 `chown 10001 ./data`。
+
 ## 检查
 
 ```bash
@@ -51,4 +64,5 @@ uv run pytest -q                   # 只跑测试
 
 ## PDF 字体
 
-PDF 导出默认使用 `C:/Windows/Fonts/simhei.ttf`;其他平台可通过 `SDF_PDF_FONT` 环境变量指定中文 TTF 字体路径。
+PDF 导出默认使用 `C:/Windows/Fonts/simhei.ttf`;其他平台可通过 `SDF_PDF_FONT` 环境变量指定中文字体路径。
+镜像内已装 `fonts-wqy-zenhei`,找不到 Windows 字体时自动用它。

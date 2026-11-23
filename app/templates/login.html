@@ -3,16 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#f7f8fa">
+<meta name="theme-color" content="#0b1220">
 <title>登录 - 水电费管理</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💧</text></svg>">
+<link rel="icon" href="{{ favicon }}">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <main class="loginwrap">
   <div class="loginbox">
-    <h1>水电费管理</h1>
-    <p class="lead">输入管理密码登录</p>
+    <div class="loginbrand">
+      {{ logomark|safe }}
+      <span>
+        <span class="lname">水电费管理</span>
+        <span class="lsub">总表与分表抄表计费</span>
+      </span>
+    </div>
+    <h1>登录工作台</h1>
+    <p class="lead">输入管理密码登录。</p>
     {% if msg %}<div class="flash err" role="alert">{{ msg }}</div>{% endif %}
     <form method="post" action="/login">
       <div class="field">
@@ -22,6 +29,7 @@
       <div class="actions"><button type="submit">登录</button></div>
     </form>
     <p class="tip">登录后可在「设置」中修改密码。</p>
+    <p class="ver">v{{ version }}</p>
   </div>
 </main>
 </body>

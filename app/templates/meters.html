@@ -2,20 +2,39 @@
 {% block body %}
 <section class="card">
   <h2>表清单</h2>
-  <p class="hint">总表对上向供水/供电部门结算,不向租户计费,也没有基数 —— 读数以部门账单为准。分表的归属由入住产生,此处只读展示。</p>
+  <p class="hint">总表对上向供水/供电部门结算,不向租户计费 —— 读数以部门账单为准,装表读数可留空。分表的归属由入住产生,此处只读展示。</p>
+  <div class="actionbar">
+    <button type="button" data-open="addMeter">新增表</button>
+    <button type="button" class="ghost" data-open="swapMeter">换表</button>
+  </div>
   <div class="tablewrap">
     <table>
       <thead><tr><th>表名</th><th>类型</th><th>级别</th><th>所属总表</th><th>当前租户</th><th class="num">装表读数</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>
-        {% if not rows %}<tr><td colspan="8" class="empty">还没有表,用下方表单添加。</td></tr>{% endif %}
+        {% if not rows %}<tr><td colspan="8" class="empty">还没有表,点上方「新增表」添加。</td></tr>{% endif %}
         {% for x in rows %}
         {% if editing and editing.id == x.id %}
         <tr class="editrow"><td colspan="8">
           <form method="post" action="/meters/edit">
             <input type="hidden" name="id" value="{{ x.id }}">
-            <div class="formgrid">
+            <div class="formgrid tight">
               <div class="field"><label for="m-name-{{ x.id }}">表名</label>
                 <input id="m-name-{{ x.id }}" name="name" value="{{ x.name }}" required></div>
+              <div class="field"><label for="m-type-{{ x.id }}">类型</label>
+                <select id="m-type-{{ x.id }}" name="meter_type">
+                  <option value="water"{% if x.meter_type == 'water' %} selected{% endif %}>水表</option>
+                  <option value="electricity"{% if x.meter_type == 'electricity' %} selected{% endif %}>电表</option>
+                </select>{% if x.has_history %}<span class="assist">已有读数,不能改类型</span>{% endif %}</div>
+              <div class="field"><label for="m-level-{{ x.id }}">级别</label>
+                <select id="m-level-{{ x.id }}" name="level">
+                  <option value="sub"{% if x.level == 'sub' %} selected{% endif %}>分表(对租户计费)</option>
+                  <option value="main"{% if x.level == 'main' %} selected{% endif %}>总表(对部门结算)</option>
+                </select>{% if x.has_history %}<span class="assist">已有读数,不能改级别</span>{% endif %}</div>
+              <div class="field"><label for="m-phase-{{ x.id }}">电表制式</label>
+                <select id="m-phase-{{ x.id }}" name="phase">
+                  <option value="single"{% if x.phase != 'three' %} selected{% endif %}>单相(1 个读数)</option>
+                  <option value="three"{% if x.phase == 'three' %} selected{% endif %}>三相(3 个读数相加)</option>
+                </select>{% if x.has_history %}<span class="assist">已有读数,不能改制式</span>{% endif %}</div>
               <div class="field"><label for="m-main-{{ x.id }}">所属总表</label>
                 <select id="m-main-{{ x.id }}" name="main_meter_id">
                   <option value="">不归属总表</option>
@@ -24,25 +43,66 @@
                   {% endfor %}
                 </select>
                 <span class="assist">仅分表需要归属总表</span></div>
-              <div class="field"><label for="m-note-{{ x.id }}">备注</label>
-                <input id="m-note-{{ x.id }}" name="note" value="{{ x.note }}"></div>
+              <div class="field"><label for="m-date-{{ x.id }}">装表日期</label>
+                <input id="m-date-{{ x.id }}" type="date" name="installed_on" value="{{ x.installed_on }}"{% if x.has_history %} disabled title="已有读数的表不能改装表日期"{% endif %}></div>
+              <div class="base-row">
+                <div class="field" id="editBaseSingle-{{ x.id }}"><label for="m-base-{{ x.id }}">装表读数</label>
+                  <input id="m-base-{{ x.id }}" type="number" name="base_value" value="{{ x.base_value if x.base_value is not none else '' }}"></div>
+                <div class="field" id="editBaseThree-{{ x.id }}" style="display:none" role="group" aria-labelledby="editBaseLbl-{{ x.id }}">
+                  <span class="fieldlabel" id="editBaseLbl-{{ x.id }}">装表读数 · 三相</span>
+                  <div class="phase3 fit">
+                    <input type="number" name="base_1" value="{{ x.base_r1 if x.base_r1 is not none else '' }}" placeholder="A相" aria-label="A 相装表读数">
+                    <input type="number" name="base_2" value="{{ x.base_r2 if x.base_r2 is not none else '' }}" placeholder="B相" aria-label="B 相装表读数">
+                    <input type="number" name="base_3" value="{{ x.base_r3 if x.base_r3 is not none else '' }}" placeholder="C相" aria-label="C 相装表读数">
+                  </div></div>
+                <div class="field base-note"><label for="m-note-{{ x.id }}">备注</label>
+                  <input class="note-input" id="m-note-{{ x.id }}" name="note" value="{{ x.note }}"></div>
+              </div>
             </div>
             <div class="actions"><button type="submit">保存修改</button><a class="btn ghost" href="/meters">取消</a></div>
+            <script>
+            (function(){
+              var row=document.currentScript.parentNode;
+              var ph=row.querySelector('[id^=m-phase-]');
+              var single=row.querySelector('[id^=editBaseSingle-]');
+              var three=row.querySelector('[id^=editBaseThree-]');
+              var base=row.querySelector('[name=base_value]');
+              function sync(){
+                var isThree=ph.value==='three';
+                single.style.display=isThree?'none':'';
+                three.style.display=isThree?'':'none';
+                var parts=three.querySelectorAll('input');
+                for(var i=0;i<parts.length;i++) parts[i].disabled=!isThree;
+                base.disabled=isThree;
+              }
+              ph.addEventListener('change',sync); sync();
+            })();
+            </script>
           </form>
         </td></tr>
         {% else %}
         <tr>
           <td>{{ x.name }}</td>
-          <td>{{ type_name(x.meter_type) }}{% if x.phase == 'three' %} <span class="tag muted">三相</span>{% endif %}</td>
+          <td>{{ type_tag(x.meter_type)|safe }}{% if x.phase == 'three' %} <span class="tag muted">三相</span>{% endif %}</td>
           <td>{% if x.level == 'main' %}<span class="tag muted">总表·不对租户计费</span>{% else %}<span class="tag accent">分表·计费用</span>{% endif %}</td>
           <td>{{ m_names.get(x.main_meter_id, '—') }}</td>
           <td>{{ x.holder or '—' }}</td>
-          <td class="num">{{ '{:,}'.format(x.base_value) if x.base_value is not none else '—' }}</td>
+          <td class="num">
+            {% if x.phase == 'three' %}
+              <div class="base-parts">{{ '{:,}'.format(x.base_r1) if x.base_r1 is not none else '—' }} / {{ '{:,}'.format(x.base_r2) if x.base_r2 is not none else '—' }} / {{ '{:,}'.format(x.base_r3) if x.base_r3 is not none else '—' }}</div>
+              <div class="base-total">合计 {{ '{:,}'.format(x.base_value) if x.base_value is not none else '—' }}</div>
+            {% elif x.base_value is not none %}{{ '{:,}'.format(x.base_value) }}{% else %}—{% endif %}
+          </td>
           <td>{% if x.retired_on %}<span class="tag muted">已换下 {{ x.retired_on }}</span>{% elif x.line_id %}<span class="tag ok">在用</span>{% else %}<span class="tag warn">空置</span>{% endif %}</td>
           <td><div class="rowactions">
             <a class="btn ghost small" href="/meters?edit={{ x.id }}">修改</a>
             {% if not x.retired_on %}
             <a class="btn ghost small" href="/meters?swap={{ x.id }}#swap">换表</a>
+            {% endif %}
+            {% if x.can_delete %}
+            <form method="post" action="/meters/delete" data-confirm="确定删除空白表「{{ x.name }}」?该表没有任何读数与账单,删除后不可恢复。">
+              <input type="hidden" name="id" value="{{ x.id }}">
+              <button class="danger small" type="submit">删除</button></form>
             {% endif %}
           </div></td>
         </tr>
@@ -53,11 +113,12 @@
   </div>
 </section>
 
-<section class="card">
-  <h2>新增表</h2>
-  <p class="hint">分表必须录装表读数(它自己的原点);总表不填基数。</p>
+<div class="confirmwrap" id="addMeter" hidden>
+  <div class="modalbox" role="dialog" aria-modal="true" aria-labelledby="addMeterTitle">
+  <h3 id="addMeterTitle">新增表</h3>
+  <p class="hint">分表必须录装表读数(它自己的原点);总表可留空。</p>
   <form method="post" action="/meters/add">
-    <div class="formgrid">
+    <div class="formgrid tight">
       <div class="field"><label for="m-new-name">表名</label>
         <input id="m-new-name" name="name" placeholder="如 101 水表" required></div>
       <div class="field"><label for="m-new-type">类型</label>
@@ -84,43 +145,52 @@
         </select></div>
       <div class="field"><label for="m-new-date">装表日期</label>
         <input id="m-new-date" type="date" name="installed_on" value="{{ today }}"></div>
-      <div class="field"><label for="m-new-base">装表读数</label>
-        <input id="m-new-base" type="number" name="base_value" placeholder="分表填,总表留空"></div>
-      <div class="field" id="newPhaseFields" style="display:none" role="group" aria-labelledby="newPhaseLbl">
-        <span class="fieldlabel" id="newPhaseLbl">三相基数</span>
-        <div class="phase3">
-          <input type="number" name="base_1" placeholder="A相" aria-label="A 相基数">
-          <input type="number" name="base_2" placeholder="B相" aria-label="B 相基数">
-          <input type="number" name="base_3" placeholder="C相" aria-label="C 相基数">
-        </div></div>
-      <div class="field"><label for="m-new-note">备注</label><input id="m-new-note" name="note" placeholder="选填"></div>
+      <div class="base-row">
+        <div class="field" id="newBaseSingle"><label for="m-new-base">装表读数</label>
+          <input id="m-new-base" type="number" name="base_value" placeholder="分表必填,总表留空"></div>
+        <div class="field" id="newBaseThree" style="display:none" role="group" aria-labelledby="newBaseLbl">
+          <span class="fieldlabel" id="newBaseLbl">装表读数 · 三相</span>
+          <div class="phase3 fit">
+            <input type="number" name="base_1" placeholder="A相" aria-label="A 相装表读数">
+            <input type="number" name="base_2" placeholder="B相" aria-label="B 相装表读数">
+            <input type="number" name="base_3" placeholder="C相" aria-label="C 相装表读数">
+          </div></div>
+        <div class="field base-note"><label for="m-new-note">备注</label><input class="note-input" id="m-new-note" name="note" placeholder="选填"></div>
+      </div>
     </div>
-    <div class="actions"><button type="submit">保存表</button></div>
+    <div class="actions"><button type="submit">保存表</button>
+      <button class="ghost" type="button" data-close>取消</button></div>
   </form>
   <script>
   (function(){
     var type=document.getElementById('m-new-type'), phase=document.getElementById('m-new-phase');
-    var base=document.getElementById('m-new-base'), pf=document.getElementById('newPhaseFields');
+    var single=document.getElementById('newBaseSingle'), three=document.getElementById('newBaseThree');
+    var base=document.getElementById('m-new-base');
     var level=document.getElementById('m-new-level');
     function sync(){
       var isElec = type.value==='electricity';
       phase.disabled=!isElec;
       if(!isElec) phase.value='single';
-      var three = isElec && phase.value==='three';
+      var isThree = isElec && phase.value==='three';
       var isMain = level.value==='main';
-      base.style.display = (isMain||three) ? 'none' : '';
-      base.required = !isMain && !three;
-      pf.style.display = three ? '' : 'none';
+      // 装表读数:分表必填,总表可留空都要给框填
+      single.style.display = isThree ? 'none' : '';
+      three.style.display = isThree ? '' : 'none';
+      base.required = !isMain && !isThree;
+      var parts=three.querySelectorAll('input');
+      for(var i=0;i<parts.length;i++) parts[i].required = !isMain && isThree;
     }
     type.addEventListener('change',sync); phase.addEventListener('change',sync);
     level.addEventListener('change',sync);
     sync();
   })();
   </script>
-</section>
+  </div>
+</div>
 
-<section class="card" id="swap">
-  <h2>换表</h2>
+<div class="confirmwrap" id="swapMeter" hidden>
+  <div class="modalbox" role="dialog" aria-modal="true" aria-labelledby="swapMeterTitle">
+  <h3 id="swapMeterTitle">换表</h3>
   <p class="hint">分表换表<b>不切断账期</b>:旧表终读数与新表基数同一天录入,本账期用量 = 旧表段 + 新表段,合并一张账。换总表时原接入的分表会自动改接到新表。</p>
   <form method="post" action="/switches/add">
     <div class="formgrid">
@@ -145,9 +215,24 @@
         <input id="sw-oldval" type="number" name="old_final_value" placeholder="拆表时的读数"></div>
       <div class="field"><label for="sw-newval">新表基数</label>
         <input id="sw-newval" type="number" name="new_base_value" placeholder="新表装上时的读数"></div>
-      <div class="field"><label for="sw-note">备注</label><input id="sw-note" name="note" placeholder="如 表坏了"></div>
+      <div class="field"><label for="sw-note">备注</label><input class="note-input" id="sw-note" name="note" placeholder="如 表坏了"></div>
     </div>
-    <div class="actions"><button type="submit">确认换表</button></div>
+    <div class="actions"><button type="submit">确认换表</button>
+      <button class="ghost" type="button" data-close>取消</button></div>
   </form>
-</section>
+  </div>
+</div>
+<script>
+(function(){
+  function closeAll(){ document.querySelectorAll('.confirmwrap').forEach(function(w){ w.hidden = true; }); }
+  document.addEventListener('click', function(e){
+    var open = e.target.closest('[data-open]');
+    if (open){ closeAll(); var el=document.getElementById(open.getAttribute('data-open')); if(el){ el.hidden=false; var f=el.querySelector('input,select'); if(f) f.focus({preventScroll:true}); } return; }
+    if (e.target.closest('[data-close]')){ closeAll(); return; }
+    if (e.target.classList && e.target.classList.contains('confirmwrap')) closeAll();
+  });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeAll(); });
+  {% if swap %}document.getElementById('swapMeter').hidden = false;{% endif %}
+})();
+</script>
 {% endblock %}

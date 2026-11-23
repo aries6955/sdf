@@ -102,3 +102,43 @@ def test_three_phase_parts_are_summed(conn):
     row = c.execute("SELECT value, r1, r2, r3 FROM readings WHERE kind='periodic'").fetchone()
     assert (row["value"], row["r1"], row["r2"], row["r3"]) == (70, 10, 20, 40)
     assert all_periods(c, meter_type="electricity")[0]["usage"] == 70
+
+
+# ---------- 返回值即账期(卡 2) ----------
+
+def test_periodic_insert_returns_its_period(conn):
+    """抄表当场得到账期,调用方不必回头再查应收表(ADR-0015)。"""
+    c, ids = conn
+    got = readings.insert(c, kind="periodic", line_id=ids["line_s"],
+                          meter_id=ids["single"], reading_date="2025-02-01",
+                          parts=(130, None, None, None))
+    assert got["period"]["period_end"] == "2025-02-01"
+    assert got["period"]["usage_amount"] == 30
+    assert got["period"]["amount"] == 300.0
+
+
+def test_only_boundary_kinds_return_a_period(conn):
+    """换表内部读数不划账期,所以不返回账期。"""
+    c, ids = conn
+    got = readings.insert(c, kind="switch_out", line_id=ids["line_s"],
+                          meter_id=ids["single"], reading_date="2025-05-01",
+                          parts=(200, None, None, None))
+    assert got["period"] is None
+
+
+# ---------- 读数查询(卡 1) ----------
+
+def test_last_of_meter_is_per_meter_not_per_line(conn):
+    """换表后按表取上一条,不能拿到另一块表上的读数。"""
+    from app.reading_index import last_of_line, last_of_meter
+
+    c, ids = conn
+    readings.insert(c, kind="periodic", line_id=ids["line_s"], meter_id=ids["single"],
+                    reading_date="2025-02-01", parts=(130, None, None, None))
+    readings.insert(c, kind="periodic", line_id=ids["line_s"], meter_id=ids["single"],
+                    reading_date="2025-03-01", parts=(160, None, None, None))
+    assert last_of_line(c, ids["line_s"])["value"] == 160
+    assert last_of_meter(c, ids["single"])["value"] == 160
+    # up_to 含当天,排除自己是靠 exclude_id
+    assert last_of_meter(c, ids["single"], up_to="2025-02-01")["value"] == 130
+    assert last_of_meter(c, ids["single"], up_to="2025-01-15")["value"] == 100

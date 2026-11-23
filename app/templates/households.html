@@ -1,35 +1,25 @@
 {% extends "base.html" %}
 {% block body %}
+{% import "_pick_meters.html" as pick %}
 <section class="card">
   <h2>租户名单</h2>
   <p class="hint">租户是收水电费的对象。一户可以挂多条计量线(多块水表 / 多块电表)。</p>
+  <div class="actionbar">
+    <button type="button" data-open="newHousehold">新建租户</button>
+  </div>
   <div class="tablewrap">
     <table>
-      <thead><tr><th>租户名称</th><th>在用计量线</th><th class="num">分表</th><th>应收</th><th>已收</th><th>欠款</th><th>预收余额</th><th>操作</th></tr></thead>
+      <thead><tr><th>租户名称</th><th>在用计量线</th><th class="num">分表</th><th class="num">应收</th><th class="num">已收</th><th class="num">欠款</th><th class="num">预收余额</th><th>操作</th></tr></thead>
       <tbody>
         {% if not rows %}
-        <tr><td colspan="8" class="empty">还没有租户,用下方表单办理入住。</td></tr>
+        <tr><td colspan="8" class="empty">还没有租户,点上方「新建租户」添加。</td></tr>
         {% endif %}
         {% for x in rows %}
-        {% if editing and editing.id == x.id %}
-        <tr class="editrow"><td colspan="8">
-          <form method="post" action="/households/edit">
-            <input type="hidden" name="id" value="{{ x.id }}">
-            <div class="formgrid">
-              <div class="field"><label for="hh-name-{{ x.id }}">租户名称</label>
-                <input id="hh-name-{{ x.id }}" name="name" value="{{ x.name }}" required></div>
-              <div class="field"><label for="hh-note-{{ x.id }}">备注</label>
-                <input id="hh-note-{{ x.id }}" name="note" value="{{ x.note }}" placeholder="选填"></div>
-            </div>
-            <div class="actions"><button type="submit">保存修改</button><a class="btn ghost" href="/households">取消</a></div>
-          </form>
-        </td></tr>
-        {% else %}
         {% set led = ledgers.get(x.id) %}
         <tr>
           <td>{{ x.name }}</td>
           <td>{% if line_counts.get(x.id) %}<span class="tag accent">{{ line_counts[x.id] }} 条</span>{% else %}<span class="tag muted">无</span>{% endif %}</td>
-          <td>{% if meter_counts.get(x.id) %}{{ meter_counts[x.id] }} 块{% else %}—{% endif %}</td>
+          <td class="num">{% if meter_counts.get(x.id) %}{{ meter_counts[x.id] }} 块{% else %}—{% endif %}</td>
           <td class="num">{{ money(led.total_due) if led else '0.00' }}</td>
           <td class="num">{{ money(led.total_paid) if led else '0.00' }}</td>
           <td class="num">
@@ -39,27 +29,23 @@
           <td class="num">{{ money(led.balance) if led else '0.00' }}</td>
           <td>
             <div class="rowactions">
-              <a class="btn ghost small" href="/households/{{ x.id }}/ledger">收费</a>
-              <a class="btn ghost small" href="/households?edit={{ x.id }}">修改</a>
+              <button class="ghost small" type="button" data-edit-hh="{{ x.id }}">修改</button>
               {% if line_counts.get(x.id) %}
-              <a class="btn ghost small" href="/households/{{ x.id }}/ledger#checkout">退租</a>
+              <button class="ghost small" type="button" data-checkout="{{ x.id }}">退租</button>
               {% endif %}
             </div>
           </td>
         </tr>
-        {% endif %}
         {% endfor %}
       </tbody>
     </table>
   </div>
 </section>
 
-<section class="card">
-  <h2>办理入住</h2>
-  <p class="hint">只能从「已装好且当前空着」的表里挑。同一路水电可以选多块表(甲有两块水表就选两块)。新建表请到「表管理」。</p>
-  {% if not meters %}
-  <p class="empty">还没有可用分表。先到「<a href="/meters">表管理</a>」添加。</p>
-  {% else %}
+<div class="confirmwrap" id="newHousehold" hidden>
+  <div class="modalbox" role="dialog" aria-modal="true" aria-labelledby="newHHTitle">
+  <h3 id="newHHTitle">新建租户</h3>
+  <p class="hint">只能从「已装好且当前空着」的表里挑。同一路水电可以选多块表。新建表请到「表管理」。</p>
   <form method="post" action="/households/add">
     <div class="formgrid">
       <div class="field"><label for="hh-new-name">租户名称</label>
@@ -67,45 +53,161 @@
       <div class="field"><label for="hh-new-date">入住日期</label>
         <input id="hh-new-date" type="date" name="start_date" value="{{ today }}" required></div>
       <div class="field"><label for="hh-new-note">备注</label>
-        <input id="hh-new-note" name="note" placeholder="选填"></div>
+        <input class="note-input" id="hh-new-note" name="note" placeholder="选填"></div>
     </div>
-    <div class="card-section">
-      <p class="card-section-title">这块住哪几块表</p>
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th style="width:48px">选用</th><th>表</th><th>类型</th><th>当前持有人</th><th class="num">最近读数</th><th class="num">入住读数</th><th class="num">单价</th><th>线名</th></tr></thead>
-          <tbody>
-          {% for m in meters %}
-            {% if m.line_id %}<tr><td colspan="8" class="empty">{{ m.name }} 正在被 {{ m.holder }} 使用,退租后才可选。</td></tr>{% endif %}
-          {% endfor %}
-          {% for m in meters if not m.line_id %}
-            <tr>
-              <td><input type="checkbox" name="meter_ids" value="{{ m.id }}" id="pick-{{ m.id }}" aria-label="选用 {{ m.name }}"></td>
-              <td>{{ m.name }}</td>
-              <td>{{ type_name(m.meter_type) }}</td>
-              <td>—</td>
-              <td class="num">{{ '{:,}'.format(m.last_value) if m.last_value is not none else '—' }}</td>
-              <td>
-                {% if m.phase == 'three' %}
-                <div class="phase3">
-                  <input type="number" name="base_{{ m.id }}_1" placeholder="A相" aria-label="{{ m.name }} A 相">
-                  <input type="number" name="base_{{ m.id }}_2" placeholder="B相" aria-label="{{ m.name }} B 相">
-                  <input type="number" name="base_{{ m.id }}_3" placeholder="C相" aria-label="{{ m.name }} C 相">
-                </div>
-                {% else %}
-                <input type="number" name="base_{{ m.id }}" placeholder="表上的读数" aria-label="{{ m.name }} 入住读数">
-                {% endif %}
-              </td>
-              <td><input type="number" step="0.0001" name="price_{{ m.id }}" placeholder="留空=沿用上次" aria-label="{{ m.name }} 单价"></td>
-              <td><input name="label_{{ m.id }}" placeholder="如 1 号房" aria-label="{{ m.name }} 线名"></td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="actions"><button type="submit">确认入住</button></div>
+    {{ pick.pick_table(meters, today) }}
+    <div class="actions"><button type="submit">新建租户</button>
+      <button class="ghost" type="button" data-close>取消</button></div>
   </form>
-  {% endif %}
-</section>
+  </div>
+</div>
+
+<div class="confirmwrap" id="editHousehold" hidden>
+  <div class="modalbox" role="dialog" aria-modal="true" aria-labelledby="editHHTitle">
+    <h3 id="editHHTitle">修改租户</h3>
+    <p class="hint">名称与入住日期不可改(已计入每条计量线和账单)。下面可以补挂新腾出来的空表,从今天起单独算。</p>
+    <form method="post" action="/households/edit">
+      <input type="hidden" name="id" value="">
+      <div class="formgrid">
+        <div class="field"><label for="hh-edit-name">租户名称</label>
+          <input id="hh-edit-name" value="" disabled></div>
+        <div class="field"><label for="hh-edit-date">入住日期</label>
+          <input id="hh-edit-date" type="date" value="" disabled></div>
+        <div class="field"><label for="hh-edit-note">备注</label>
+          <input class="note-input" id="hh-edit-note" name="note" placeholder="选填"></div>
+      </div>
+      <div class="card-section">
+        <p class="card-section-title">当前在用的表</p>
+        <div class="tablewrap"><table>
+          <thead><tr><th>表</th><th>类型</th><th>线名</th><th class="num">入住读数</th></tr></thead>
+          <tbody data-edit-lines></tbody>
+        </table></div>
+      </div>
+      {{ pick.pick_table(meters, today, "补挂空表(可选)") }}
+      <div class="actions"><button type="submit">保存修改</button>
+        <button class="ghost" type="button" data-close>取消</button></div>
+    </form>
+  </div>
+</div>
+<script>
+(function(){
+  function closeNew(){ document.getElementById('newHousehold').hidden = true; }
+  document.addEventListener('click', function(e){
+    if (e.target.closest('[data-open="newHousehold"]')){
+      document.getElementById('newHousehold').hidden = false;
+      var f = document.getElementById('hh-new-name');
+      if (f) f.focus({preventScroll:true});
+      return;
+    }
+    if (e.target.closest('#newHousehold [data-close]')){ closeNew(); return; }
+    if (e.target.id === 'newHousehold'){ closeNew(); }
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') closeNew();
+  });
+
+  // 修改租户:同一个弹窗形态,名称与入住日期只读
+  var data = {{ info|tojson }};
+  var types = {{ {'water': type_name('water'), 'electricity': type_name('electricity')}|tojson }};
+  var host = document.getElementById('editHousehold');
+  function closeEdit(){ host.hidden = true; }
+  function openEdit(id){
+    var d = data[id];
+    if (!d) return;
+    host.querySelector('input[name=id]').value = id;
+    host.querySelector('#hh-edit-name').value = d.name;
+    host.querySelector('#hh-edit-date').value = d.start;
+    host.querySelector('#hh-edit-note').value = d.note;
+    var body = host.querySelector('[data-edit-lines]');
+    body.innerHTML = '';
+    (d.lines || []).forEach(function(l){
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>'+l.meter+'</td><td>'+(types[l.meter_type]||'')+'</td><td>'+l.label+
+        '</td><td class="num">'+Number(l.value).toLocaleString('zh-CN')+'</td>';
+      body.appendChild(tr);
+    });
+    if (!body.children.length){
+      body.innerHTML = '<tr><td colspan="4" class="empty">该租户当前没有在用的表。</td></tr>';
+    }
+    host.hidden = false;
+  }
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest('[data-edit-hh]');
+    if (btn){ openEdit(btn.getAttribute('data-edit-hh')); return; }
+    if (e.target.closest('#editHousehold [data-close]')){ closeEdit(); return; }
+    if (e.target.id === 'editHousehold'){ closeEdit(); }
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') closeEdit();
+  });
+})();
+</script>
+
+{% if rows %}
+<div id="checkoutModal" hidden></div>
+<template id="checkoutTpl">
+  <div class="confirmwrap">
+    <div class="confirmbox checkoutbox" role="dialog" aria-modal="true" aria-labelledby="coTitle">
+      <h3 id="coTitle">办理退租</h3>
+      <form method="post" action="/households/checkout">
+        <input type="hidden" name="id" value="">
+        <p class="confirmtext">录入每条线退租当天的读数，系统当场结算本租期并关闭租期。未收部分留在台账继续追。</p>
+        <div class="field"><label for="co-modal-date">退租日期</label>
+          <input id="co-modal-date" type="date" name="move_out_date" value="{{ today }}" required></div>
+        <div class="tablewrap" style="margin-top:12px">
+          <table>
+            <thead><tr><th>类型</th><th>线名</th><th>当前表</th><th class="num">上次读数</th><th class="num">退租读数</th></tr></thead>
+            <tbody data-co-lines></tbody>
+          </table>
+        </div>
+        <div class="actions" style="justify-content:flex-end;margin-top:14px">
+          <button class="danger" type="submit">确认退租</button>
+          <button class="ghost" type="button" data-co-close>取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</template>
+<script>
+(function(){
+  var data = {{ out_lines|tojson }};
+  var types = {{ {'water': type_name('water'), 'electricity': type_name('electricity')}|tojson }};
+  var host = document.getElementById('checkoutModal');
+  var tpl = document.getElementById('checkoutTpl');
+
+  function close(){ host.hidden = true; host.innerHTML = ''; }
+
+  function open(id){
+    var lines = data[id] || [];
+    host.hidden = false;
+    host.innerHTML = '';
+    var node = tpl.content.cloneNode(true);
+    node.querySelector('input[name=id]').value = id;
+    var body = node.querySelector('[data-co-lines]');
+    lines.forEach(function(l){
+      var tr = document.createElement('tr');
+      var phase = l.phase === 'three';
+      var inputs = phase
+        ? '<div class="phase3"><input type="number" name="out_'+l.id+'_1" placeholder="A相" required aria-label="A 相退租读数"><input type="number" name="out_'+l.id+'_2" placeholder="B相" required aria-label="B 相退租读数"><input type="number" name="out_'+l.id+'_3" placeholder="C相" required aria-label="C 相退租读数"></div>'
+        : '<input type="number" name="out_'+l.id+'" placeholder="表上的读数" required aria-label="退租读数">';
+      tr.innerHTML = '<td>'+(types[l.meter_type]||'')+'</td><td>'+(l.label||'—')+'</td><td>'+
+        (l.meter_name||'—')+'</td><td class="num">'+Number(l.move_in_value).toLocaleString('zh-CN')+'</td><td class="num">'+inputs+'</td>';
+      body.appendChild(tr);
+    });
+    node.querySelector('[data-co-close]').addEventListener('click', close);
+    var wrap = node.querySelector('.confirmwrap');
+    wrap.addEventListener('click', function(e){ if(e.target===wrap) close(); });
+    host.appendChild(node);
+    var first = host.querySelector('input[type=number]');
+    if (first) first.focus({preventScroll:true});
+  }
+
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest('[data-checkout]');
+    if(btn) open(btn.getAttribute('data-checkout'));
+  });
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') close(); });
+})();
+</script>
+{% endif %}
 {% endblock %}

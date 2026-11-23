@@ -36,18 +36,40 @@ def create(name: str | None = None) -> str:
     name = name or datetime.now().strftime("备份-%Y%m%d-%H%M%S.sqlite3")
     if not name.endswith(".sqlite3"):
         name += ".sqlite3"
-    if any(not c.isalnum() and c not in "-_" for c in Path(name).stem):
-        raise ValueError("备份名只能含中文、字母、数字、- 和 _")
+    _check_name(name)
     path = backup_dir() / name
     with connect() as src, sqlite3.connect(path) as dst:
         src.backup(dst)
     return name
 
 
+def _check_name(name: str) -> None:
+    """备份名只能是一段文件名 —— 它直接拼进路径,放 .. 就能跳出 backups/。
+
+    先拦目录分隔符与 ..,再拦落单的奇怪字符(允许中文名与 -_)。
+    """
+    if Path(name).name != name or ".." in name or "/" in name or "\\" in name:
+        raise ValueError("备份名不能带路径")
+    if any(not c.isalnum() and c not in "-_" for c in Path(name).stem):
+        raise ValueError("备份名只能含中文、字母、数字、- 和 _")
+
+
 def restore(name: str) -> None:
-    """用指定备份整库覆盖当前库。调用方负责确认。"""
+    """用指定备份整库覆盖当前库。调用方负责确认。
+
+    恢复前先验快照能通过 integrity_check 并留一份当前库 —— 拿损坏文件恢复
+    会把主库一起弄坏,且此时已没有回头路。
+    """
+    _check_name(name)
     path = backup_dir() / name
     if not path.is_file():
         raise FileNotFoundError(name)
+    with sqlite3.connect(path) as src:
+        ok = src.execute("PRAGMA integrity_check").fetchone()[0]
+        if ok != "ok":
+            raise ValueError(f"备份文件已损坏:{ok}")
+    # 覆盖前留一份当前库。名字必须与待恢复的那份不同:
+    # 若复用 AUTO_NAME,正好在恢复「清空前自动备份」时会把自己覆盖成空库。
+    create(datetime.now().strftime("恢复前-%Y%m%d-%H%M%S.sqlite3"))
     with sqlite3.connect(path) as src, connect() as dst:
         src.backup(dst)

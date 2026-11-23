@@ -8,7 +8,7 @@
 """
 
 from .ledger import ledger_view
-from .reading_index import latest_meter_names, readings_on_line
+from .reading_index import latest_meter_names, readings_by_line, readings_on_line
 
 BOUNDARY_KINDS = ("move_in", "periodic", "move_out")
 
@@ -69,7 +69,11 @@ def _period(rows, prev, cur) -> dict:
 
 def periods_for_line(conn, line_id: int) -> list[dict]:
     """一条线的全部账期。账期只由边界读数(move_in/periodic/move_out)切分。"""
-    rows = readings_on_line(conn, line_id)
+    return _periods_from(readings_on_line(conn, line_id))
+
+
+def _periods_from(rows) -> list[dict]:
+    """一条线已按 (日期, id) 升序的读数序列 → 全部账期。"""
     boundary = [r for r in rows if r["kind"] in BOUNDARY_KINDS]
     return [_period(rows, prev, cur) for prev, cur in zip(boundary, boundary[1:])]
 
@@ -96,10 +100,11 @@ def all_periods(conn, meter_type: str = None, household_id: int = None,
     lines = [dict(x) for x in conn.execute(sql + " ORDER BY l.id", params)]
     names = latest_meter_names(conn)
     settled = ledger_view(conn)["by_key"]
+    seqs = readings_by_line(conn, [x["line_id"] for x in lines])
     rows = []
     for line in lines:
         name = line["label"] or names.get(line["line_id"], "")
-        for p in periods_for_line(conn, line["line_id"]):
+        for p in _periods_from(seqs.get(line["line_id"], [])):
             if date_from and p["end"] < date_from:
                 continue
             if date_to and p["end"] > date_to:

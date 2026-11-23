@@ -73,12 +73,12 @@ def parts_of(form, meter, prefix: str = "value"):
     return value, None, None, None
 
 
-def _guard_lock(conn, line_id, reading_date, inserting, action):
+def _guard_lock(conn, line_id, reading_date, action, inserting=False):
     """已收款的账期不许动:插入会把账期一分为二,改撤会打穿已收的钱(ADR-0015/0021)。
 
     判据按**计量线**取:同一租户水电两路在同一天各有一期,只有收到钱的那一路该锁。
     """
-    hit = touched_by_reading(conn, line_id, reading_date, inserting=inserting)
+    hit = touched_by_reading(conn, line_id, reading_date)
     if hit:
         tail = ("不能在其区间内补录。" if inserting
                 else f"不能{action}。")
@@ -130,7 +130,7 @@ def insert(conn, *, kind: str, line_id: int, meter_id: int, reading_date: str,
         if prev is None and kind == "periodic" and value < line["move_in_value"]:
             raise ReadingRejected(f"读数不得小于入住读数 {line['move_in_value']}")
         if kind == "periodic":
-            _guard_lock(conn, line_id, reading_date, True, "补录")
+            _guard_lock(conn, line_id, reading_date, "补录", inserting=True)
 
     if price is None:
         base = nxt or prev
@@ -158,7 +158,7 @@ def change(conn, reading_id: int, form) -> None:
     line = _line(conn, row["line_id"])
     if line["move_out_date"]:
         raise ReadingRejected("该租期已结束,读数锁定")
-    _guard_lock(conn, row["line_id"], row["reading_date"], False, "改读数")
+    _guard_lock(conn, row["line_id"], row["reading_date"], "改读数")
 
     meter = conn.execute("SELECT * FROM meters WHERE id=?", (row["meter_id"],)).fetchone()
     # 日期必须是可比较的 YYYY-MM-DD:账期排序与区间筛选都靠字符串大小
@@ -191,7 +191,7 @@ def retract(conn, reading_id: int) -> None:
     if row["kind"] != "periodic":
         raise ReadingRejected("只有常规抄表的读数可以撤回")
     line = _line(conn, row["line_id"])
-    _guard_lock(conn, row["line_id"], row["reading_date"], False, "撤回")
+    _guard_lock(conn, row["line_id"], row["reading_date"], "撤回")
     if line["move_out_date"]:
         raise ReadingRejected("该租期已结束,读数锁定")
     conn.execute("DELETE FROM readings WHERE id=?", (reading_id,))
@@ -210,7 +210,5 @@ def editable(conn, reading, spans=None) -> bool:
     if line is None or line["move_out_date"]:
         return False
     if spans is not None:
-        return not span_hit(spans, reading["line_id"], reading["reading_date"],
-                            inserting=False)
-    return not touched_by_reading(conn, reading["line_id"],
-                                 reading["reading_date"], inserting=False)
+        return not span_hit(spans, reading["line_id"], reading["reading_date"])
+    return not touched_by_reading(conn, reading["line_id"], reading["reading_date"])

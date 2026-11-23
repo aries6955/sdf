@@ -13,6 +13,24 @@ def readings_on_line(conn, line_id: int):
     ).fetchall()
 
 
+def readings_by_line(conn, line_ids) -> dict:
+    """一次查出多条线的读数,按线分组,各按 (日期, id) 升序。
+
+    列表页逐线算账期时用这个:一条线查一次,线数一多就是几十条 SQL。
+    分组后语义与 readings_on_line 完全一致,只是把 N 次查询压成一次。
+    """
+    line_ids = list(line_ids)
+    if not line_ids:
+        return {}
+    seq = conn.execute(
+        f"SELECT * FROM readings WHERE line_id IN ({','.join('?' * len(line_ids))}) "
+        "ORDER BY line_id, reading_date, id", line_ids).fetchall()
+    grouped = {}
+    for r in seq:
+        grouped.setdefault(r["line_id"], []).append(r)
+    return grouped
+
+
 def last_of_line(conn, line_id: int):
     """该线最新的读数(跨换表)。没有则 None。"""
     return conn.execute(

@@ -3,7 +3,13 @@
 import pytest
 
 import app.db as db
-from app.ledger import margin_from, paid_for, paid_to_utility, tenant_due
+from app.billing import all_periods
+from app.ledger import margin_from, paid_for, paid_to_utility
+
+
+def _due(conn, meter_type=None, household_id=None):
+    """向租户应收 = 账期金额之和。生产代码只在页面内联求和,这里给测试一个同义入口。"""
+    return round(sum(p["amount"] for p in all_periods(conn, meter_type, household_id)), 2)
 
 
 @pytest.fixture()
@@ -50,15 +56,15 @@ def test_paid_for_adds_both_types_or_one(env):
 
 def test_margin_is_due_minus_paid(env):
     c, _ = env
-    assert tenant_due(c) == 800.0
-    assert margin_from(tenant_due(c), paid_for(c)) == 800.0 - 844.0
-    assert margin_from(tenant_due(c, "water"), paid_for(c, "water")) == 800.0 - 504.0
+    assert _due(c) == 800.0
+    assert margin_from(_due(c), paid_for(c)) == 800.0 - 844.0
+    assert margin_from(_due(c, "water"), paid_for(c, "water")) == 800.0 - 504.0
 
 
 def test_margin_uses_the_same_filter_as_the_page(env):
     """统计页按租户筛选时,应收是过滤后的值,毛差必须用同一份,不能全量相减。"""
     c, hh = env
-    due_jia = tenant_due(c, household_id=hh["甲"])
+    due_jia = _due(c, household_id=hh["甲"])
     assert due_jia == 300.0
     assert margin_from(due_jia, paid_for(c)) == 300.0 - 844.0
 

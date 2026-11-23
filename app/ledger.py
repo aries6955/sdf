@@ -131,7 +131,7 @@ def paid_periods(conn, household_id: int) -> list[dict]:
             for x, take in zip(due_rows, placed) if take > EPS]
 
 
-def span_hit(spans, line_id: int, reading_date: str, inserting: bool):
+def span_hit(spans, line_id: int, reading_date: str):
     """在一组已付款区间里找命中。区间口径见 touched_by_reading。
 
     只比同一条计量线:同一租户水路那期已收款,不该拦住电路补录。
@@ -139,24 +139,24 @@ def span_hit(spans, line_id: int, reading_date: str, inserting: bool):
     for p in spans:
         if p["line_id"] != line_id:
             continue
-        inside = (p["start"] < reading_date < p["end"] if inserting
-                  else p["start"] <= reading_date <= p["end"])
+        # 插入也用闭区间:同日期再插一条会把该账期劈成两段,
+        # 已收到的钱会落到别的期上,未收金额凭空多出来。
+        inside = p["start"] <= reading_date <= p["end"]
         if inside:
             return p
     return None
 
 
-def touched_by_reading(conn, line_id: int, reading_date: str,
-                       inserting: bool) -> dict | None:
+def touched_by_reading(conn, line_id: int, reading_date: str) -> dict | None:
     """在某条计量线的某日期增/改读数会动到哪个已收款的账期;没有则返回 None。
 
-    插入一条读数会把包含它的账期一分为二,因此区间用开区间;
-    改或删一条读数会动到以它为端点的账期,用闭区间。
+    插入一条读数会把包含它的账期一分为二,所以两条路径都用闭区间:
+    同日期再插一条,劈开的正是端点所属的那个已收款账期。
     """
     row = conn.execute("SELECT household_id FROM lines WHERE id=?", (line_id,)).fetchone()
     if row is None:
         return None
-    return span_hit(paid_periods(conn, row["household_id"]), line_id, reading_date, inserting)
+    return span_hit(paid_periods(conn, row["household_id"]), line_id, reading_date)
 
 
 def ledger_view(conn) -> dict:
@@ -205,14 +205,6 @@ def ledger_view(conn) -> dict:
             "outstanding": round(sum(x["outstanding"] for x in households), 2),
         },
     }
-
-
-def tenant_due(conn, meter_type: str = None, household_id: int = None,
-               date_from: str = "", date_to: str = "") -> float:
-    """向租户应收:账期金额之和。这是房东向租户开出的钱。"""
-    from .billing import all_periods
-    return round(sum(p["amount"] for p in all_periods(
-        conn, meter_type, household_id, date_from, date_to)), 2)
 
 
 def paid_to_utility(conn, date_from: str = "", date_to: str = "") -> dict:

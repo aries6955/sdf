@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Query, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import backup, readings, tenancy
@@ -42,7 +42,6 @@ STATIC = Path(__file__).parent / "static"
 STATIC.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
-
 # 分区 tab:同一入口下的多个页面用顶部 tab 切换
 SYS_TABS = [("households", "/households", "租户"),
             ("meters", "/meters", "表管理"),
@@ -52,8 +51,15 @@ DAILY_TABS = [("readings", "/readings", "抄表"),
 
 @app.middleware("http")
 async def no_store_html(request: Request, call_next):
-    """HTML 页面一律不缓存,避免浏览器展示改动前的旧界面。"""
+    """HTML 不缓存(改完立刻看到新界面);静态资源反过来长缓存。
+
+    静态文件带 ETag,内容变了下一次请求自然失效,靠文件名不变也不会发错版本。
+    原先这里一刀切返回 no-store,CSS 每次重拉 28KB,页面会先白一下再上色。
+    """
     response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=604800"
+        return response
     ctype = response.headers.get("content-type", "")
     if ctype.startswith("text/html"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -70,15 +76,27 @@ OPEN_PATHS = ("/login", "/logout")
 OPEN_PREFIXES = ("/static/",)
 
 
+def same_origin(request: Request) -> bool:
+    """写操作必须来自本站页面。
+
+    cookie 是 samesite=lax,跨站表单 POST 本来就带不上;再挡一道 Origin,
+    是为了防住 lax 覆盖不到的旧浏览器与「同站不同源」的子域页面。
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return True          # 某些客户端不带 Origin,交给 cookie 判定
+    return origin.rstrip("/") == str(request.base_url).rstrip("/")
+
+
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     """所有页面与提交动作统一校验登录,只放行登录页与静态资源。"""
     path = request.url.path
     if path in OPEN_PATHS or any(path.startswith(p) for p in OPEN_PREFIXES):
         return await call_next(request)
+    if request.method == "POST" and not same_origin(request):
+        return PlainTextResponse("跨站请求已拒绝", status_code=403)
     if request.cookies.get(SESSION_COOKIE) not in _sessions:
-        if request.method == "POST":
-            return RedirectResponse("/login", status_code=303)
         return RedirectResponse("/login", status_code=303)
     return await call_next(request)
 
@@ -702,10 +720,15 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
             "SELECT l.*, h.name AS household_name FROM lines l "
             "JOIN households h ON h.id=l.household_id "
             "WHERE l.move_out_date IS NULL ORDER BY l.id")]
+        # 表与读数各一次查完:逐线查是 N+1,线数涨了每个页面都跟着慢
+        meters_of = {m["line_id"]: m for m in conn.execute(
+            "SELECT * FROM meters WHERE line_id IS NOT NULL")}
+        lasts = {r["line_id"]: r for r in conn.execute(
+            "SELECT * FROM readings r WHERE r.id = (SELECT r2.id FROM readings r2 "
+            "WHERE r2.line_id = r.line_id ORDER BY r2.reading_date DESC, r2.id DESC LIMIT 1)")}
         for line in lines_all:
-            last = last_of_line(conn, line["id"])
-            meter = conn.execute(
-                "SELECT * FROM meters WHERE line_id=?", (line["id"],)).fetchone()
+            last = lasts.get(line["id"])
+            meter = meters_of.get(line["id"])
             line["meter"] = meter
             line["last_date"] = last["reading_date"] if last else line["move_in_date"]
             line["last_value"] = last["value"] if last else line["move_in_value"]
@@ -762,6 +785,8 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
             rwhere.append("r.reading_date <= ?")
             rparams.append(date_to)
         clause = "WHERE " + " AND ".join(rwhere)
+        # 这里走 SQL 分页(读数表会一直变长),其余页面用 pages.page_slice:
+        # 它们的行来自内存里已算好的账期,再落库分页反而要多查一次。
         total = conn.execute(
             f"SELECT COUNT(*) FROM readings r JOIN lines l ON r.line_id=l.id {clause}",
             rparams).fetchone()[0]

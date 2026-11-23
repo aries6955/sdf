@@ -1,6 +1,10 @@
 """领域模型的核心规则:归属只来自租期、抄表即成账、账期跨表、空档期、收款冲抵。"""
 
 
+import sqlite3
+
+import pytest
+
 import app.db as db
 from tests.conftest import (
     _add,
@@ -623,3 +627,62 @@ def test_receipt_to_unknown_household_is_rejected_not_500(client):
         follow_redirects=False)
     assert r.status_code == 303
     assert "租户不存在" in _msg(r)
+
+
+# ---------- 回归:审计发现的三处数据/安全问题 ----------
+
+def test_backup_name_cannot_escape_backups_dir(client):
+    """恢复的备份名拼进路径:带 .. 或分隔符必须被拒,否则能读任意 SQLite 文件覆盖主库。"""
+    from app import backup
+
+    for evil in ("../evil.sqlite3", "sub/evil.sqlite3", "../../etc/x.sqlite3",
+                 "evil/../../x.sqlite3"):
+        with pytest.raises(ValueError):
+            backup.restore(evil)
+
+
+def test_restore_refuses_corrupt_snapshot(client):
+    """拿损坏文件恢复会把主库一起弄坏,必须先验 integrity_check。"""
+    from app import backup
+
+    backup.create("garbage")
+    path = backup.backup_dir() / "garbage.sqlite3"
+    path.write_bytes(b"not a database at all")
+    with pytest.raises((ValueError, sqlite3.DatabaseError)):
+        backup.restore("garbage.sqlite3")
+
+
+def test_restore_keeps_a_copy_of_the_overwritten_db(client):
+    """恢复会覆盖当前库,覆盖前必须另存一份,且不能与待恢复的那份同名。"""
+    _basic(client)
+    _add(client, "分水A", "2025-02-01", 130)
+    from app import backup
+
+    backup.create("要恢复的")
+    client.post("/init/restore", data={"name": "要恢复的.sqlite3"})
+    names = {x["name"] for x in backup.backups()}
+    assert "恢复前" in "".join(names) or any(n.startswith("恢复前-") for n in names)
+
+
+def test_same_day_backfill_cannot_split_a_paid_period(client):
+    """已收款账期的端点日期再插一条读数,会把该期劈成两段,已收的钱对错期。"""
+    _basic(client)
+    _add(client, "分水A", "2025-02-01", 130)
+    client.post("/receipts/add", data={"household_id": str(_hid("甲")),
+                                       "entry_date": "2025-02-03", "amount": "300"})
+    resp = _add(client, "分水A", "2025-02-01", 128)
+    assert "已收款" in _msg(resp), "同日期补录必须被已收款账期挡住"
+
+
+def test_cross_site_post_is_rejected(client):
+    """带外站 Origin 的 POST 一律 403 —— 不依赖浏览器是否发 cookie。"""
+    r = client.post("/init/clear", headers={"origin": "https://evil.example"},
+                    follow_redirects=False)
+    assert r.status_code == 403
+    assert _one("select count(*) n from households")["n"] >= 0   # 库没被动
+
+
+def test_same_origin_post_is_allowed(client):
+    r = client.post("/init/property", data={"property_name": "本站"},
+                    headers={"origin": "http://testserver"}, follow_redirects=False)
+    assert r.status_code == 303

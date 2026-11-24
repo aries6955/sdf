@@ -335,10 +335,6 @@ textarea { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font
 code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: var(--fs-md); background: var(--surface-3); color: var(--ink);
   padding: 1px 5px; border-radius: 6px; }
-pre { background: var(--surface-2); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); padding: 10px 12px; overflow-x: auto;
-  margin: 8px 0; }
-pre code { background: none; padding: 0; font-size: var(--fs-md); line-height: 1.6; }
 select {
   appearance: none; background-color: var(--surface); color: var(--ink);
   background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath fill='none' stroke='%2364748b' stroke-width='1.6' d='M0 0h10L5 6z'/%3E%3C/svg%3E");

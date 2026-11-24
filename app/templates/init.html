@@ -33,12 +33,9 @@
 
 <section class="card">
   <h2>修改登录密码</h2>
-  <p class="hint">密码只保存在 <code>/root/sdf/.env</code> 的
-  <code>SDF_PASSWORD</code> 一行,不入数据库,也不单独存文件。
-  改法:编辑那一行,再重建容器,新密码立即生效。</p>
-  <pre><code>vi /root/sdf/.env                        # 改 SDF_PASSWORD=...
-cd /root/sdf && docker compose up -d</code></pre>
-  <p class="hint">本页不提供在线修改入口,以免密码分存两处。</p>
+  <p class="hint">在服务器上编辑 <code>/root/sdf/.env</code> 的
+  <code>SDF_PASSWORD</code> 一行,然后 <code>cd /root/sdf &amp;&amp; docker compose up -d</code>,
+  新密码立即生效。本页不提供在线修改。</p>
 </section>
 
 <section class="card">

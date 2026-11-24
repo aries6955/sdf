@@ -686,3 +686,18 @@ def test_same_origin_post_is_allowed(client):
     r = client.post("/init/property", data={"property_name": "本站"},
                     headers={"origin": "http://testserver"}, follow_redirects=False)
     assert r.status_code == 303
+
+
+def test_flash_keeps_existing_query_string_valid(client):
+    """回跳地址本身带查询串时,提示参数必须用 & 拼接。
+
+    拼成 ?ok= 会让 page=1?ok=... 变成一个值,下一页 curl 就报 int_parsing。
+    """
+    from app.pages import go
+
+    loc = go("/ledger?household_id=1&page=2", ok="收款已登记").headers["location"]
+    assert "?ok=" not in loc
+    assert "&ok=" in loc
+
+    loc = go("/readings", ok="已保存").headers["location"]
+    assert loc.startswith("/readings?ok=")

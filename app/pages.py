@@ -47,6 +47,12 @@ def flash(msg: str = "", ok: str = "") -> tuple[str, str] | None:
 
 
 def go(path: str, msg: str = "", ok: str = "") -> RedirectResponse:
-    """带一条提示跳回:msg 走 msg 参数,ok 走 ok 参数,都是 303。"""
+    """带一条提示跳回:msg 走 msg 参数,ok 走 ok 参数,都是 303。
+
+    path 可能已经带了查询串(分页链接会把 line_id/page 一起带回来),
+    所以要按是否已有 ``?`` 决定用 & 还是 ?。拼错会让 page=1?ok=... 这种
+    值落到一个参数上,下一页就报 int_parsing。
+    """
     key = "msg" if msg else "ok"
-    return RedirectResponse(f"{path}?{key}={quote(msg or ok)}", status_code=303)
+    sep = "&" if "?" in path else "?"
+    return RedirectResponse(f"{path}{sep}{key}={quote(msg or ok)}", status_code=303)

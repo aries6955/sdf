@@ -132,12 +132,44 @@ docker run --rm -e RCLONE_CONFIG_R2_TYPE=s3 -e RCLONE_CONFIG_R2_PROVIDER=Cloudfl
 **恢复演练必做**:备份没验证过等于没有。每季度从 R2 取一份最新的,本地覆盖跑一次
 `uv run uvicorn` 看账本对不对。
 
+## 反向代理
+
+应用只比主机名、不比协议,所以 Nginx / lucky / Caddy 在 443(或其它端口)终止 TLS、
+再转 http 到容器都能直接用。**反代要转发 `Host` 头**(或补 `X-Forwarded-Host`),
+否则应用看到的是容器地址,写操作会被自己的跨站校验挡下。
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8536;
+    proxy_set_header Host $host:$server_port;        # 关键:带上端口的原始 Host
+    proxy_set_header X-Forwarded-Host $host:$server_port;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+lucky 里对应的是「保留原始 Host」这类选项。判断标准很简单:打开页面能正常操作就对了,
+写操作若报「跨站请求已拒绝」,就是这个头没转发。
+
 ## 检查
 
 ```bash
 uv run python scripts/check.py     # ruff + pytest,提交前跑这个
 uv run pytest -q                   # 只跑测试
 ```
+
+### 浏览器端到端检查
+
+pytest 只验业务逻辑,验不到「页面能不能真的点」。这个脚本用本机 Chromium
+真实登录、逐页访问、点击每个交互元素,收集 JS 异常、控制台错误、失败请求、
+HTTP 4xx/5xx 与文字乱码:
+
+```bash
+uv run python scripts/browser_check.py https://sdf.home.716955.top:16666 密码
+```
+
+零额外依赖 —— 直接走 Chromium 自带的 DevTools 协议(脚本里自带最小 WebSocket 客户端)。
+改完模板或 JS 后跑一次,能抓到 pytest 看不到的事。
+注意它只验证「页面不报错」,不验证金额算得对不对,那部分仍由 pytest 覆盖。
 
 ## 使用流程
 

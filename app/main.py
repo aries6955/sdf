@@ -3,7 +3,7 @@ import secrets
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
@@ -77,15 +77,21 @@ OPEN_PREFIXES = ("/static/",)
 
 
 def same_origin(request: Request) -> bool:
-    """写操作必须来自本站页面。
+    """写操作必须来自本站页面 —— 只比主机名,不比协议。
 
-    cookie 是 samesite=lax,跨站表单 POST 本来就带不上;再挡一道 Origin,
-    是为了防住 lax 覆盖不到的旧浏览器与「同站不同源」的子域页面。
+    比协议会误伤反代:Nginx / lucky / Caddy 在 443 上终止 TLS 再转 http,
+    应用看到的是 http://,浏览器发的是 https://,一律被判成跨站。
+    攻击要防的是「别的域名替我提交」,主机名不同就够了,协议不携带这个信息。
     """
     origin = request.headers.get("origin")
     if not origin:
         return True          # 某些客户端不带 Origin,交给 cookie 判定
-    return origin.rstrip("/") == str(request.base_url).rstrip("/")
+    if origin == "null":
+        return False         # sandbox / file:// 之类,不该出现在正常页面里
+    host = (request.headers.get("x-forwarded-host")
+            or request.headers.get("host")
+            or urlparse(str(request.base_url)).netloc)
+    return urlparse(origin).netloc == host.split(",")[0].strip()
 
 
 @app.middleware("http")

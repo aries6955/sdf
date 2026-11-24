@@ -682,6 +682,34 @@ def test_cross_site_post_is_rejected(client):
     assert _one("select count(*) n from households")["n"] >= 0   # 库没被动
 
 
+def test_https_behind_reverse_proxy_is_not_cross_site(client):
+    """反代在 443 终止 TLS 再转 http:Origin 是 https,应用看到的是 http,不能判跨站。
+
+    真实故障:lucky 反代下抄表保存一律 403「跨站请求已拒绝」。
+    """
+    r = client.post("/init/property", data={"property_name": "反代"},
+                    headers={"origin": "https://sdf.example.com",
+                             "host": "sdf.example.com"}, follow_redirects=False)
+    assert r.status_code == 303, "同主机名不同协议应放行"
+
+
+def test_forwarded_host_header_is_honoured(client):
+    """反代改写了 Host 时,用 X-Forwarded-Host 比主机名。"""
+    r = client.post("/init/property", data={"property_name": "反代2"},
+                    headers={"origin": "https://sdf.example.com",
+                             "host": "172.25.0.1:8536",
+                             "x-forwarded-host": "sdf.example.com"},
+                    follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_null_origin_is_rejected(client):
+    """Origin: null 来自 sandbox/file://,正常页面不会出现,一律拒绝。"""
+    r = client.post("/init/property", data={"property_name": "x"},
+                    headers={"origin": "null"}, follow_redirects=False)
+    assert r.status_code == 403
+
+
 def test_same_origin_post_is_allowed(client):
     r = client.post("/init/property", data={"property_name": "本站"},
                     headers={"origin": "http://testserver"}, follow_redirects=False)

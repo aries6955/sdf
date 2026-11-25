@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, Query, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="水电费管理", lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 STATIC = Path(__file__).parent / "static"
 STATIC.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -778,8 +780,10 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
         hh_items = sorted({(x["household_id"], x["household_name"])
                            for x in all_lines}, key=lambda kv: kv[1])
 
+        settled = ledger_view(conn)["by_key"]
         rows = all_periods(conn, household_id=_int(household_id) or None,
-                           date_from=date_from, date_to=date_to)
+                           date_from=date_from, date_to=date_to,
+                           settled=settled)
         if line_id:
             rows = [r for r in rows if str(r["line_id"]) == line_id]
         total_usage_w = sum(r["usage"] for r in rows if r["meter_type"] == "water")
@@ -820,7 +824,6 @@ def readings_page(request: Request, msg: str = "", ok: str = "", edit: int = 0,
         all_readings = [dict(x) for x in detail]
         locked = paid_spans(conn)
         prevs = predecessors(conn, all_readings)
-        settled = ledger_view(conn)["by_key"]
         for x in all_readings:
             # 可编辑与否只在读数模块里定义一次,页面与写入共用
             x["can_edit"] = readings.editable(conn, x, spans=locked)

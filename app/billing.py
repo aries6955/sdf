@@ -79,7 +79,8 @@ def _periods_from(rows) -> list[dict]:
 
 
 def all_periods(conn, meter_type: str = None, household_id: int = None,
-                date_from: str = "", date_to: str = "") -> list[dict]:
+                date_from: str = "", date_to: str = "",
+                settled: dict = None) -> list[dict]:
     """全部账期,带租户、表、线信息。
 
     每一期已经带上该期的 ``paid`` / ``outstanding`` / ``settled`` —— 口径与台账同一处推导。
@@ -99,7 +100,8 @@ def all_periods(conn, meter_type: str = None, household_id: int = None,
         sql += " WHERE " + " AND ".join(where)
     lines = [dict(x) for x in conn.execute(sql + " ORDER BY l.id", params)]
     names = latest_meter_names(conn)
-    settled = ledger_view(conn)["by_key"]
+    if settled is None:
+        settled = ledger_view(conn)["by_key"]
     seqs = readings_by_line(conn, [x["line_id"] for x in lines])
     rows = []
     for line in lines:

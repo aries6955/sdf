@@ -91,7 +91,17 @@ def same_origin(request: Request) -> bool:
     host = (request.headers.get("x-forwarded-host")
             or request.headers.get("host")
             or urlparse(str(request.base_url)).netloc)
-    return urlparse(origin).netloc == host.split(",")[0].strip()
+    return _hostname(urlparse(origin).netloc) == _hostname(host.split(",")[0])
+
+
+def _hostname(netloc: str) -> str:
+    """取主机名,去掉端口与结尾的点。
+
+    端口必须去掉:浏览器对 443 会省略默认端口(Origin 是 https://a.com),
+    反代却常把 Host 转成 a.com:443,比整个 netloc 就会误判跨站。
+    按主机名比也和 cookie 的作用域一致 —— cookie 本来就不分端口。
+    """
+    return (urlparse("//" + netloc.strip()).hostname or "").lower().rstrip(".")
 
 
 @app.middleware("http")

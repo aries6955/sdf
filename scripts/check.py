@@ -88,6 +88,8 @@ def main() -> int:
         ["uv", "run", "ruff", "check", "app", "tests", "scripts"],
         # 模板里的内联脚本验不了,但 static/*.js 能手写错 —— node --check 零依赖
         *[["node", "--check", f] for f in js],
+        # dune-init:新代码不得引入注释/弃置字符串;存量见 .dune-baseline.json
+        ["python", "scripts/check_comments.py", "--diff"],
         ["uv", "run", "pytest", "-q"],
     ]
     for step in steps:

@@ -703,6 +703,31 @@ def test_forwarded_host_header_is_honoured(client):
     assert r.status_code == 303
 
 
+@pytest.mark.parametrize("origin,host", [
+    ("https://sdf.home.716955.top", "sdf.home.716955.top"),
+    ("https://sdf.home.716955.top", "sdf.home.716955.top:443"),
+    ("https://sdf.home.716955.top:443", "sdf.home.716955.top"),
+    ("https://sdf.home.716955.top:16666", "sdf.home.716955.top:16666"),
+])
+def test_default_and_explicit_ports_are_the_same_origin(client, origin, host):
+    """浏览器对 443 省略端口,反代常转发 host:443 —— 比 netloc 会误判 403。
+
+    真实场景:反代从 :16666 挪到 443 之后,写操作突然报「跨站请求已拒绝」。
+    按主机名比也和 cookie 作用域一致,cookie 本来就不分端口。
+    """
+    r = client.post("/init/property", data={"property_name": "端口"},
+                    headers={"origin": origin, "host": host}, follow_redirects=False)
+    assert r.status_code == 303
+
+
+def test_subdomain_is_still_cross_site(client):
+    """按主机名比,不等于放宽:子域是不同主机,仍要拒绝。"""
+    r = client.post("/init/property", data={"property_name": "x"},
+                    headers={"origin": "https://a.sdf.home.716955.top",
+                             "host": "sdf.home.716955.top"}, follow_redirects=False)
+    assert r.status_code == 403
+
+
 def test_null_origin_is_rejected(client):
     """Origin: null 来自 sandbox/file://,正常页面不会出现,一律拒绝。"""
     r = client.post("/init/property", data={"property_name": "x"},

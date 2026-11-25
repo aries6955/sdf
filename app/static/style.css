@@ -606,3 +606,52 @@ ul.plain li { margin: 4px 0; }
   .card { padding: 16px 17px; }
   body::after { display: none; }
 }
+
+/* 手机端(≤620px):字号/颜色不动,只收间距与换行;表格仍靠 tablewrap 横滚 */
+@media (max-width: 620px) {
+  /* 顶部横排侧栏:允许换行,别把 brand 文字挤成竖排 */
+  .sidebar { flex-wrap: wrap; overflow-x: visible; padding: 10px 12px; }
+  .sidebar .brand { border-right: 0; padding: 0; width: 100%; }
+  .sidebar .brand .logotext .sub { display: none; }
+  .sidebar .sidegroup { flex-wrap: wrap; }
+  .sidebar a.navlink { padding: 7px 9px; font-size: var(--fs-md); }
+  .sidebar a.navlink .ico { width: 22px; height: 22px; }
+
+  .content { padding: 16px 12px 44px; }
+  .pagehead { gap: 8px; padding-bottom: 12px; margin-bottom: 18px; }
+  .pagehead h1 { font-size: var(--fs-2xl); }
+  .tabs { width: 100%; justify-content: stretch; }
+  .tab { flex: 1; text-align: center; padding: 8px 6px; }
+  .card { padding: 14px 14px; border-radius: var(--radius-md); }
+
+  /* 统计/行动卡:小屏两张一排,数字不缩档 */
+  .stats { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .stat { padding: 12px 12px; }
+  .stepcards, .quickrow { grid-template-columns: 1fr; }
+
+  /* 备注字段(span2)与 .formgrid:has 规则同级覆盖:两列 352px 会撑破 390px 视口 */
+  .formgrid > .field:has(input.note-input) { grid-column: auto; }
+  .formgrid { grid-template-columns: 1fr; }
+  tr.editrow .formgrid { grid-template-columns: 1fr; }
+
+  /* 三相输入框允许换行,否则 3×120px 撑破卡片 */
+  .phase3 { flex-wrap: wrap; }
+  .phase3 input { flex: 1 1 96px; width: auto; min-width: 84px; }
+  td.num .phase3 input { flex-basis: 96px; width: auto; }
+  tr.editrow .base-row { flex-wrap: wrap; }
+  tr.editrow .base-row .phase3 { flex-wrap: wrap; }
+
+  /* 筛选条与操作区:控件占满整行,好点好填 */
+  .filterbar .field { flex: 1 1 140px; }
+  .filterbar input, .filterbar select { width: 100%; }
+  .actionbar { gap: 6px; }
+  .actionbar button, .actionbar .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* 弹窗贴近全宽,保留 90vh 内部滚动 */
+  .confirmwrap { padding: 12px; }
+  .modalbox { padding: 18px 16px 16px; }
+  .confirmbox { padding: 20px 18px 18px; }
+
+  /* 快捷收款与行内操作:表内输入框宽度是铁律不动,只收小按钮间距 */
+  .rowactions { flex-wrap: wrap; }
+}
